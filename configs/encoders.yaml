@@ -1,0 +1,9 @@
+# Does the gain carry over to a stronger encoder? Same protocol and seeds as
+# ablation.yaml, with DeBERTa-v3-base (184M parameters) instead of BERT-base (110M).
+# Use an A100 or L4 (bf16). On a T4, DeBERTa falls back to fp32, which is much slower,
+# because it is known to overflow in fp16.
+base: base.yaml
+seeds: [42, 43, 44]
+runs:
+  - {name: deberta_bce,          arch: bert, loss: bce,      encoder: microsoft/deberta-v3-base}
+  - {name: deberta_moe_cbfocal,  arch: moe,  loss: cb_focal, encoder: microsoft/deberta-v3-base}

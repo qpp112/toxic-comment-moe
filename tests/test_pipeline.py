@@ -77,6 +77,11 @@ def test_run_end_to_end(arch, loss, data_dir, tiny_encoder_dir, tmp_path):
     assert is_complete(cfg)
     saved = json.loads((cfg.run_dir / "metrics.json").read_text())
     assert saved["test"]["n"] == 150 and saved["data"]["test"] == 150
+    assert (
+        saved["group"] == cfg.name
+        and saved["seed"] == 42
+        and saved["environment"]["precision"] in ("fp32", "fp16", "bf16")
+    )
     assert 0.0 <= saved["test"]["roc_auc_mean"] <= 1.0
     assert len(saved["history"]) == 2 and saved["best_epoch"] in (1, 2)
     assert len(saved["test"]["thresholds"]) == 6

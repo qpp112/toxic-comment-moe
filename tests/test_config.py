@@ -13,7 +13,15 @@ def test_defaults_are_valid():
 
 @pytest.mark.parametrize(
     "bad",
-    [{"arch": "rnn"}, {"loss": "mse"}, {"top_k": 9}, {"train_fraction": 0}, {"val_fraction": 1.0}, {"pooling": "max"}],
+    [
+        {"arch": "rnn"},
+        {"loss": "mse"},
+        {"top_k": 9},
+        {"train_fraction": 0},
+        {"val_fraction": 1.0},
+        {"pooling": "max"},
+        {"amp_dtype": "fp8"},
+    ],
 )
 def test_invalid_values_rejected(bad):
     with pytest.raises(ValueError):
@@ -30,23 +38,44 @@ def test_parse_overrides_casts_types():
     assert out == {"epochs": 1, "lr": 3e-5, "fp16": False, "focal_alpha": None, "name": "x"}
 
 
-def test_shipped_ablation_parses():
+def test_shipped_ablation_expands_over_seeds():
     runs = load_ablation(ROOT / "configs" / "ablation.yaml")
-    assert len(runs) == 8
+    assert len(runs) == 24
+    groups = {r.group for r in runs}
+    assert len(groups) == 8
     assert {(r.arch, r.loss) for r in runs} == {
         (a, l) for a in ("bert", "moe") for l in ("bce", "weighted_bce", "focal", "cb_focal")
     }
+    # seed-major order: the first 8 runs are a complete single-seed ablation
+    assert {r.seed for r in runs[:8]} == {42} and {r.group for r in runs[:8]} == groups
+    assert runs[0].name == "bert_bce_s42" and runs[0].group_name == "bert_bce"
+    # the data split never changes across seeds, so runs are paired
+    assert {r.split_seed for r in runs} == {42}
     assert all(isinstance(r.lr, float) for r in runs)
-    assert sum(r.save_checkpoint for r in runs) == 1
+    assert [r.name for r in runs if r.save_checkpoint] == ["moe_cbfocal_s42"]
 
 
-def test_cli_overrides_apply_to_every_run():
-    runs = load_ablation(ROOT / "configs" / "ablation.yaml", {"epochs": 1, "train_fraction": 0.01})
+def test_seed_override_and_cli_overrides():
+    runs = load_ablation(ROOT / "configs" / "ablation.yaml", {"epochs": 1, "train_fraction": 0.01}, seeds=[7])
+    assert len(runs) == 8 and all(r.seed == 7 and r.name.endswith("_s7") for r in runs)
     assert all(r.epochs == 1 and r.train_fraction == 0.01 for r in runs)
 
 
+def test_file_without_seeds_keeps_plain_names(tmp_path):
+    p = tmp_path / "a.yaml"
+    p.write_text("base: {epochs: 1}\nruns:\n  - {name: x, arch: moe}\n")
+    (run,) = load_ablation(p)
+    assert run.name == "x" and run.group_name == "x" and run.seed == 42
+
+
+def test_encoder_study_parses():
+    runs = load_ablation(ROOT / "configs" / "encoders.yaml")
+    assert len(runs) == 6
+    assert {r.encoder for r in runs} == {"microsoft/deberta-v3-base"}
+
+
 def test_moe_ablation_parses():
-    assert len(load_ablation(ROOT / "configs" / "moe_ablation.yaml")) == 4
+    assert len(load_ablation(ROOT / "configs" / "moe_ablation.yaml")) == 12
 
 
 def test_load_config_from_yaml(tmp_path):

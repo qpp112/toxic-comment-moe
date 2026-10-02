@@ -1,7 +1,13 @@
-# 2 architectures x 4 losses. Runs execute in this order and are skipped if
-# results/<name>/metrics.json already exists, so a disconnected Colab session can
-# simply be restarted. The four most informative runs come first.
+# 2 heads x 4 losses, each repeated over 3 random seeds (24 runs).
+# The train/val split is fixed (split_seed), so the seeds only change model
+# initialisation, dropout and batch order -- runs are paired across methods.
+#
+# Runs are seed-major: all 8 runs for seed 42 first, then 43, then 44, so a
+# partially finished study is still a complete single-seed ablation. Finished runs
+# (results/<name>/metrics.json exists) are skipped, so an interrupted session
+# can simply be restarted.
 base: base.yaml
+seeds: [42, 43, 44]
 runs:
   - {name: bert_bce,       arch: bert, loss: bce}
   - {name: moe_cbfocal,    arch: moe,  loss: cb_focal, save_checkpoint: true}

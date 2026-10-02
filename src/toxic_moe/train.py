@@ -36,10 +36,27 @@ def linear_warmup_decay(optimizer, warmup_steps: int, total_steps: int):
     return torch.optim.lr_scheduler.LambdaLR(optimizer, factor)
 
 
-def _autocast(device: torch.device, enabled: bool):
-    if not enabled or device.type != "cuda":
+def resolve_amp_dtype(cfg, device: torch.device) -> Optional[torch.dtype]:
+    """Mixed-precision dtype to use, or None for full fp32.
+
+    bf16 on Ampere or newer GPUs (A100, L4, H100): same speed as fp16, no loss scaling,
+    no overflow. fp16 + GradScaler on older GPUs (T4, V100). DeBERTa-v3 is known to
+    overflow in fp16, so it falls back to fp32 when bf16 is unavailable.
+    """
+    if not cfg.fp16 or device.type != "cuda":
+        return None
+    native_bf16 = torch.cuda.get_device_capability(device)[0] >= 8
+    if cfg.amp_dtype == "bf16" or (cfg.amp_dtype == "auto" and native_bf16):
+        return torch.bfloat16
+    if "deberta" in str(cfg.encoder).lower():
+        return None
+    return torch.float16
+
+
+def _autocast(device: torch.device, dtype: Optional[torch.dtype]):
+    if dtype is None or device.type != "cuda":
         return contextlib.nullcontext()
-    return torch.autocast(device_type="cuda", dtype=torch.float16)
+    return torch.autocast(device_type="cuda", dtype=dtype)
 
 
 def _grad_scaler(enabled: bool):
@@ -51,7 +68,7 @@ def _grad_scaler(enabled: bool):
 
 @torch.no_grad()
 def predict(
-    model, loader: DataLoader, device: torch.device, fp16: bool = True
+    model, loader: DataLoader, device: torch.device, amp_dtype: Optional[torch.dtype] = None
 ) -> Tuple[np.ndarray, Optional[np.ndarray]]:
     """Return sigmoid probabilities (and MoE gates) in the dataset's original order."""
     model.eval()
@@ -60,7 +77,7 @@ def predict(
     gates: Optional[np.ndarray] = None
     for batch in loader:
         idx = batch["index"].numpy()
-        with _autocast(device, fp16):
+        with _autocast(device, amp_dtype):
             out = model(
                 batch["input_ids"].to(device, non_blocking=True), batch["attention_mask"].to(device, non_blocking=True)
             )
@@ -94,14 +111,14 @@ def train(
     ``model.state_dict().copy()``, a shallow copy whose tensors kept changing, so its
     "best model" was silently always the last epoch.
     """
-    use_amp = bool(cfg.fp16 and device.type == "cuda")
+    amp_dtype = resolve_amp_dtype(cfg, device)
     model.to(device)
     loss_fn.to(device)
     optimizer = build_optimizer(model, cfg.lr, cfg.head_lr, cfg.weight_decay)
     steps_per_epoch = math.ceil(len(train_loader) / cfg.grad_accum_steps)
     total_steps = steps_per_epoch * cfg.epochs
     scheduler = linear_warmup_decay(optimizer, int(cfg.warmup_ratio * total_steps), total_steps)
-    scaler = _grad_scaler(use_amp)
+    scaler = _grad_scaler(amp_dtype == torch.float16)  # loss scaling is only needed for fp16
 
     best_score, best_state, best_epoch, history = -math.inf, None, 0, []
     for epoch in range(cfg.epochs):
@@ -114,7 +131,7 @@ def train(
             input_ids = batch["input_ids"].to(device, non_blocking=True)
             attention_mask = batch["attention_mask"].to(device, non_blocking=True)
             labels = batch["labels"].to(device, non_blocking=True)
-            with _autocast(device, use_amp):
+            with _autocast(device, amp_dtype):
                 out = model(input_ids, attention_mask)
             task_loss = loss_fn(out.logits.float(), labels)
             loss = task_loss
@@ -142,7 +159,7 @@ def train(
                 log(msg + f" ({rate:.1f} it/s)")
 
         train_time = time.time() - t0
-        val_probs, _ = predict(model, val_loader, device, use_amp)
+        val_probs, _ = predict(model, val_loader, device, amp_dtype)
         val = evaluate(y_val, val_probs)
         record = {
             "epoch": epoch + 1,

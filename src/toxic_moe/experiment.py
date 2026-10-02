@@ -17,12 +17,12 @@ import torch
 
 from . import LABELS, __version__
 from .batching import TokenizedDataset, encode_texts, make_loader
-from .config import Config, save_config
+from .config import Config, is_complete, save_config  # noqa: F401 (is_complete re-exported)
 from .data import describe, ensure_extracted, label_counts, load_test, load_train, subsample, train_val_split
 from .losses import build_loss
 from .metrics import evaluate, gate_statistics, pr_curves, tune_thresholds
 from .models import build_model
-from .train import predict, train
+from .train import predict, resolve_amp_dtype, train
 
 logger = logging.getLogger("toxic_moe")
 
@@ -56,10 +56,6 @@ def _environment(device: torch.device) -> Dict[str, Any]:
     return env
 
 
-def is_complete(cfg: Config) -> bool:
-    return (cfg.run_dir / "metrics.json").exists()
-
-
 def run(cfg: Config, log=None) -> Dict[str, Any]:
     """Train and evaluate one configuration; write everything to ``cfg.run_dir``."""
     log = log or (lambda msg: print(f"[{cfg.name}] {msg}", flush=True))
@@ -74,12 +70,13 @@ def run(cfg: Config, log=None) -> Dict[str, Any]:
 
     # ---------------- data ----------------
     data_dir = ensure_extracted(cfg.data_dir)
-    train_df = subsample(load_train(data_dir), cfg.train_fraction, cfg.seed)
+    train_df = subsample(load_train(data_dir), cfg.train_fraction, cfg.split_seed)
     test_df = load_test(data_dir)
-    tr_idx, va_idx = train_val_split(train_df, cfg.val_fraction, cfg.seed)
+    tr_idx, va_idx = train_val_split(train_df, cfg.val_fraction, cfg.split_seed)
     y_all = train_df[LABELS].to_numpy()
     y_tr, y_va, y_te = y_all[tr_idx], y_all[va_idx], test_df[LABELS].to_numpy()
-    log(f"train {len(tr_idx):,} | val {len(va_idx):,} | test {len(test_df):,} | device {device}")
+    precision = {None: "fp32", torch.bfloat16: "bf16", torch.float16: "fp16"}[resolve_amp_dtype(cfg, device)]
+    log(f"train {len(tr_idx):,} | val {len(va_idx):,} | test {len(test_df):,} | {device} {precision} | seed {cfg.seed}")
     log("train label counts:\n" + describe(train_df.iloc[tr_idx]).to_string())
 
     from transformers import AutoTokenizer
@@ -110,11 +107,11 @@ def run(cfg: Config, log=None) -> Dict[str, Any]:
     model.load_state_dict(best_state)
 
     # ---------------- thresholds on val, final numbers on test ----------------
-    fp16 = bool(cfg.fp16 and device.type == "cuda")
-    val_probs, _ = predict(model, val_loader, device, fp16)
+    amp_dtype = resolve_amp_dtype(cfg, device)
+    val_probs, _ = predict(model, val_loader, device, amp_dtype)
     thresholds = tune_thresholds(y_va, val_probs)
     t0 = time.time()
-    test_probs, test_gates = predict(model, test_loader, device, fp16)
+    test_probs, test_gates = predict(model, test_loader, device, amp_dtype)
     log(f"test inference: {len(test_ds):,} comments in {time.time() - t0:.0f}s")
 
     val_metrics = evaluate(y_va, val_probs, thresholds)
@@ -125,8 +122,12 @@ def run(cfg: Config, log=None) -> Dict[str, Any]:
 
     results = {
         "name": cfg.name,
+        "group": cfg.group_name,
         "arch": cfg.arch,
         "loss": cfg.loss,
+        "encoder": cfg.encoder,
+        "seed": cfg.seed,
+        "split_seed": cfg.split_seed,
         "best_epoch": best_epoch,
         "history": history,
         "val": val_metrics,
@@ -140,7 +141,7 @@ def run(cfg: Config, log=None) -> Dict[str, Any]:
         "num_parameters": int(sum(p.numel() for p in model.parameters())),
         "head_parameters": int(sum(p.numel() for p in model.head.parameters())),
         "wall_clock_minutes": round((time.time() - t_start) / 60, 1),
-        "environment": _environment(device),
+        "environment": {**_environment(device), "precision": precision},
     }
 
     if cfg.save_predictions:

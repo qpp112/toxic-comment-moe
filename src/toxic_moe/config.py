@@ -11,12 +11,14 @@ import yaml
 
 ARCHS = ("bert", "moe")
 LOSSES = ("bce", "weighted_bce", "focal", "cb_focal")
+AMP_DTYPES = ("auto", "bf16", "fp16")
 
 
 @dataclass
 class Config:
     # --- identity -----------------------------------------------------------
     name: str = "bert_bce"
+    group: Optional[str] = None  # runs that differ only by seed share a group (e.g. "bert_bce")
 
     # --- data ---------------------------------------------------------------
     data_dir: str = "data"
@@ -51,12 +53,14 @@ class Config:
     warmup_ratio: float = 0.06
     max_grad_norm: float = 1.0
     grad_accum_steps: int = 1
-    fp16: bool = True  # mixed precision (ignored on CPU)
+    fp16: bool = True  # mixed precision on/off (ignored on CPU)
+    amp_dtype: str = "auto"  # "auto" = bf16 on Ampere+ GPUs (A100, L4), fp16 otherwise (T4)
     selection_metric: str = "roc_auc_mean"  # validation metric used to keep the best epoch
     log_every: int = 200
 
     # --- misc ---------------------------------------------------------------
-    seed: int = 42
+    seed: int = 42  # model init, dropout and batch order
+    split_seed: int = 42  # data subsample + train/val split; fixed across seeds so runs are paired
     num_workers: int = 2
     output_dir: str = "results"
     save_checkpoint: bool = False
@@ -77,7 +81,13 @@ class Config:
             raise ValueError("top_k must be in [0, num_experts]")
         if self.grad_accum_steps < 1:
             raise ValueError("grad_accum_steps must be >= 1")
+        if self.amp_dtype not in AMP_DTYPES:
+            raise ValueError(f"amp_dtype must be one of {AMP_DTYPES}, got {self.amp_dtype!r}")
         return self
+
+    @property
+    def group_name(self) -> str:
+        return self.group or self.name
 
     @property
     def run_dir(self) -> Path:
@@ -143,11 +153,26 @@ def load_config(path: str | Path | None = None, overrides: Optional[Dict[str, An
     return Config().replace(**values)
 
 
-def load_ablation(path: str | Path, overrides: Optional[Dict[str, Any]] = None) -> List[Config]:
-    """Load an ablation file: ``{base: <yaml or dict>, runs: [{name: ..., <overrides>}, ...]}``.
+def load_ablation(
+    path: str | Path,
+    overrides: Optional[Dict[str, Any]] = None,
+    seeds: Optional[List[int]] = None,
+) -> List[Config]:
+    """Load an ablation file and expand it over random seeds.
 
-    ``overrides`` (e.g. from the CLI) are applied to every run last, so a quick
-    smoke test can shrink all runs with ``train_fraction=0.01 epochs=1``.
+    File format::
+
+        base: base.yaml            # or an inline dict of Config fields
+        seeds: [42, 43, 44]        # optional; omitted -> one run per entry, no suffix
+        runs:
+          - {name: bert_bce, arch: bert, loss: bce}
+          ...
+
+    Each run becomes ``<name>_s<seed>`` with ``group=<name>``. Runs are ordered
+    seed-major (every run for the first seed, then every run for the second, ...),
+    so a partially finished study is still a complete single-seed ablation. Only the
+    first seed keeps ``save_checkpoint``. ``overrides`` (e.g. from the CLI) apply to
+    every run; ``seeds`` overrides the file's list.
     """
     path = Path(path)
     spec = load_yaml(path)
@@ -157,14 +182,29 @@ def load_ablation(path: str | Path, overrides: Optional[Dict[str, Any]] = None) 
     runs = spec.get("runs") or []
     if not runs:
         raise ValueError(f"No runs listed in {path}")
+    seed_list = list(seeds) if seeds else spec.get("seeds")
+
     configs = []
-    for run in runs:
-        values = {**base, **run, **(overrides or {})}
-        configs.append(Config().replace(**values))
+    if not seed_list:
+        for run in runs:
+            configs.append(Config().replace(**{**base, **run, **(overrides or {})}))
+    else:
+        for i, seed in enumerate(seed_list):
+            for run in runs:
+                values = {**base, **run, **(overrides or {})}
+                values.update(group=values["name"], name=f"{values['name']}_s{seed}", seed=int(seed))
+                if i > 0:
+                    values["save_checkpoint"] = False
+                configs.append(Config().replace(**values))
     names = [c.name for c in configs]
     if len(set(names)) != len(names):
         raise ValueError(f"Duplicate run names in {path}: {names}")
     return configs
+
+
+def is_complete(cfg: Config) -> bool:
+    """A run is finished once its metrics.json exists (it is written last)."""
+    return (cfg.run_dir / "metrics.json").exists()
 
 
 def save_config(cfg: Config, path: str | Path) -> None:
