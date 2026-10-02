@@ -1,0 +1,37 @@
+# Shared settings for every run. Any key can be overridden per run (ablation.yaml)
+# or from the command line:  python scripts/run_ablation.py --set epochs=1 batch_size=64
+data_dir: data
+train_fraction: 1.0        # full Jigsaw train.csv (159,571 comments); 0.05 = course-project setting
+val_fraction: 0.1          # stratified hold-out used for model selection + threshold tuning
+max_length: 128
+
+encoder: bert-base-uncased
+pooling: cls
+dropout: 0.1
+
+# MoE head (ignored when arch: bert)
+num_experts: 6
+expert_hidden: 256
+top_k: 2
+aux_loss_weight: 0.01
+
+# losses
+focal_gamma: 2.0
+cb_beta: 0.9999
+
+epochs: 2
+batch_size: 32
+eval_batch_size: 256
+lr: 2.0e-5
+head_lr: 1.0e-4
+weight_decay: 0.01
+warmup_ratio: 0.06
+max_grad_norm: 1.0
+fp16: true
+selection_metric: roc_auc_mean
+
+seed: 42
+num_workers: 2
+output_dir: results
+save_predictions: true
+save_checkpoint: false

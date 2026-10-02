@@ -1,0 +1,31 @@
+# data (Kaggle terms: not redistributed)
+/data/
+*.csv
+*.zip
+!docs/**/*.csv
+
+# large training outputs: keep metrics.json / config.yaml / summary.md, drop the rest
+results/**/predictions.npz
+results/**/model.pt
+results/**/tokenizer/
+results/**/encoder_config/
+results_smoke/
+*.pt
+*.bin
+*.safetensors
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+build/
+dist/
+.venv/
+venv/
+
+# os / editors
+.DS_Store
+.idea/
+.vscode/

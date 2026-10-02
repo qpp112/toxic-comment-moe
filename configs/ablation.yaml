@@ -1,0 +1,13 @@
+# 2 architectures x 4 losses. Runs execute in this order and are skipped if
+# results/<name>/metrics.json already exists, so a disconnected Colab session can
+# simply be restarted. The four most informative runs come first.
+base: base.yaml
+runs:
+  - {name: bert_bce,       arch: bert, loss: bce}
+  - {name: moe_cbfocal,    arch: moe,  loss: cb_focal, save_checkpoint: true}
+  - {name: moe_bce,        arch: moe,  loss: bce}
+  - {name: bert_cbfocal,   arch: bert, loss: cb_focal}
+  - {name: bert_wbce,      arch: bert, loss: weighted_bce}
+  - {name: moe_wbce,       arch: moe,  loss: weighted_bce}
+  - {name: bert_focal,     arch: bert, loss: focal}
+  - {name: moe_focal,      arch: moe,  loss: focal}

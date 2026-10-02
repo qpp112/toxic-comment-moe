@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "toxic-moe"
+version = "0.2.0"
+description = "Mixture-of-Experts BERT with class-balanced focal loss for multi-label toxic comment classification (Jigsaw)."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Qui Pham" }]
+dependencies = [
+  "torch>=2.1",
+  "transformers>=4.38",
+  "numpy>=1.24",
+  "pandas>=1.5",
+  "scikit-learn>=1.2",
+  "pyyaml>=6.0",
+  "tqdm>=4.60",
+]
+
+[project.optional-dependencies]
+viz = ["matplotlib>=3.7"]
+dev = ["pytest>=7", "matplotlib>=3.7"]
+
+[project.scripts]
+toxic-moe-predict = "toxic_moe.predict:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 120
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "I", "UP"]
+ignore = ["E501", "E741", "UP006", "UP007", "UP035", "UP045"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]
+"scripts/*" = ["E402"]
+"notebooks/*" = ["E402"]
