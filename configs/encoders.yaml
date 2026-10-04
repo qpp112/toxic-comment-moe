@@ -1,7 +1,10 @@
 # Does the gain carry over to a stronger encoder? Same protocol and seeds as
 # ablation.yaml, with DeBERTa-v3-base (184M parameters) instead of BERT-base (110M).
-# Use an A100 or L4 (bf16). On a T4, DeBERTa falls back to fp32, which is much slower,
-# because it is known to overflow in fp16.
+# DeBERTa-v3 runs in full precision (fp32 with TF32 matmuls on A100/L4): under bf16
+# autocast it produced NaN losses within the first few hundred steps, and it
+# overflows in fp16.
+# Full precision is slower, so this study costs roughly 2x the GPU time per run of
+# the BERT-base runs, or more. Use an A100 or L4.
 base: base.yaml
 seeds: [42, 43, 44]
 runs:

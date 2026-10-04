@@ -56,13 +56,20 @@ def _environment(device: torch.device) -> Dict[str, Any]:
     return env
 
 
-def run(cfg: Config, log=None) -> Dict[str, Any]:
-    """Train and evaluate one configuration; write everything to ``cfg.run_dir``."""
+def run(cfg: Config, log=None, encoder=None) -> Dict[str, Any]:
+    """Train and evaluate one configuration; write everything to ``cfg.run_dir``.
+
+    ``encoder`` optionally replaces the pretrained encoder named by ``cfg.encoder``
+    (the tokenizer is still loaded from ``cfg.encoder``); the tests use this.
+    """
     log = log or (lambda msg: print(f"[{cfg.name}] {msg}", flush=True))
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")  # we tokenize before forking workers
     cfg.validate()
     set_seed(cfg.seed)
     device = get_device()
+    if device.type == "cuda":  # TF32 matmuls: near-fp32 accuracy, much faster on Ampere+ GPUs
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
     run_dir = cfg.run_dir
     run_dir.mkdir(parents=True, exist_ok=True)
     save_config(cfg, run_dir / "config.yaml")
@@ -100,7 +107,7 @@ def run(cfg: Config, log=None) -> Dict[str, Any]:
     pos, total = label_counts(y_tr)
     loss_fn = build_loss(cfg.loss, pos, total, gamma=cfg.focal_gamma, alpha=cfg.focal_alpha, beta=cfg.cb_beta)
     log(f"loss: {loss_fn.extra_repr()}")
-    model = build_model(cfg, num_labels=len(LABELS))
+    model = build_model(cfg, num_labels=len(LABELS), encoder=encoder)
 
     # ---------------- train ----------------
     best_state, history, best_epoch = train(model, cfg, train_loader, val_loader, y_va, loss_fn, device, log)
@@ -164,7 +171,8 @@ def run(cfg: Config, log=None) -> Dict[str, Any]:
             run_dir / "model.pt",
         )
         tokenizer.save_pretrained(run_dir / "tokenizer")
-        model.encoder.config.save_pretrained(run_dir / "encoder_config")
+        if hasattr(model.encoder.config, "save_pretrained"):
+            model.encoder.config.save_pretrained(run_dir / "encoder_config")
 
     # metrics.json is written last: its presence marks the run as complete
     with open(run_dir / "metrics.json", "w") as f:

@@ -1,6 +1,7 @@
 """End-to-end smoke test: the full training/evaluation pipeline on a tiny model, on CPU."""
 
 import json
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -96,19 +97,39 @@ def test_run_end_to_end(arch, loss, data_dir, tiny_encoder_dir, tmp_path):
         assert len(out[0]["expert_weights"]) == 3
 
 
-def test_training_learns_signal(data_dir, tiny_encoder_dir, tmp_path):
-    """On the synthetic data, the tiny model should clearly beat chance."""
+class BagOfEmbeddings(torch.nn.Module):
+    """A trivial encoder (token embeddings, no attention).
+
+    Training a randomly initialised transformer on 360 examples is itself unreliable, so
+    this test swaps in an encoder that is guaranteed to be learnable. Everything else --
+    data loading, tokenization, batching, the MoE head, the training loop, prediction
+    re-ordering and evaluation -- is the real pipeline, so any misalignment between
+    predictions and labels would show up as chance-level ROC-AUC.
+    """
+
+    def __init__(self, vocab_size: int, hidden: int = 32):
+        super().__init__()
+        self.config = SimpleNamespace(hidden_size=hidden)
+        self.embed = torch.nn.Embedding(vocab_size, hidden)
+
+    def forward(self, input_ids, attention_mask=None):
+        return SimpleNamespace(last_hidden_state=self.embed(input_ids))
+
+
+def test_pipeline_learns_signal(data_dir, tiny_encoder_dir, tmp_path):
+    """On the synthetic data (a bag-of-words baseline scores ~0.99), the model must clearly learn."""
+    vocab_size = len(transformers.AutoTokenizer.from_pretrained(tiny_encoder_dir))
     cfg = Config(
         name="learn",
         data_dir=str(data_dir),
-        encoder=str(tiny_encoder_dir),
+        encoder=str(tiny_encoder_dir),  # tokenizer only
         arch="moe",
         loss="bce",
         pooling="mean",
-        epochs=6,
+        epochs=8,
         batch_size=16,
-        lr=2e-3,
-        head_lr=2e-3,
+        lr=1e-2,
+        head_lr=1e-2,
         max_length=32,
         num_workers=0,
         num_experts=3,
@@ -116,5 +137,47 @@ def test_training_learns_signal(data_dir, tiny_encoder_dir, tmp_path):
         output_dir=str(tmp_path / "r"),
         save_predictions=False,
     )
-    results = run(cfg, log=lambda m: None)
-    assert results["test"]["roc_auc_mean"] > 0.75
+    torch.manual_seed(0)
+    results = run(cfg, log=lambda m: None, encoder=BagOfEmbeddings(vocab_size))
+    history = [round(h["val_roc_auc_mean"], 3) for h in results["history"]]
+    assert results["test"]["roc_auc_mean"] > 0.85, (
+        f"test ROC-AUC {results['test']['roc_auc_mean']:.3f}, val per epoch {history}"
+    )
+
+
+class NaNEncoder(BagOfEmbeddings):
+    """Produces NaN activations, like a numerically unstable encoder."""
+
+    def forward(self, input_ids, attention_mask=None):
+        return SimpleNamespace(last_hidden_state=self.embed(input_ids) * float("nan"))
+
+
+def test_non_finite_training_stops_early(data_dir, tiny_encoder_dir, tmp_path):
+    vocab_size = len(transformers.AutoTokenizer.from_pretrained(tiny_encoder_dir))
+    cfg = Config(
+        name="nan",
+        data_dir=str(data_dir),
+        encoder=str(tiny_encoder_dir),
+        arch="moe",
+        epochs=1,
+        batch_size=8,
+        max_length=32,
+        num_workers=0,
+        num_experts=3,
+        log_every=0,
+        output_dir=str(tmp_path / "r"),
+    )
+    with pytest.raises(FloatingPointError):
+        run(cfg, log=lambda m: None, encoder=NaNEncoder(vocab_size))
+    assert not is_complete(cfg)  # a failed run is retried next time, never reported
+
+
+def test_deberta_defaults_to_full_precision():
+    from toxic_moe.train import resolve_amp_dtype
+
+    gpu = torch.device("cuda")  # only the device *type* is inspected on these code paths
+    deberta = Config(encoder="microsoft/deberta-v3-base")
+    assert resolve_amp_dtype(deberta, gpu) is None
+    assert resolve_amp_dtype(deberta.replace(amp_dtype="bf16"), gpu) is torch.bfloat16  # explicit opt-in
+    assert resolve_amp_dtype(Config(fp16=False), gpu) is None
+    assert resolve_amp_dtype(Config(), torch.device("cpu")) is None

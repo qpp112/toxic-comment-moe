@@ -227,6 +227,50 @@ def delta_lines(a: Setting, b: Setting) -> List[str]:
     return [f"**{b.label}** vs **{a.label}** ({seeds}): " + "; ".join(out) + "."]
 
 
+DELTA_KEYS = ["roc", "pr", "f1", "rare"]
+
+
+def paired_table(base: Setting, others: List[Setting]) -> str:
+    """Each setting minus the baseline, computed per seed, then mean ± std over seeds."""
+    titles = [METRICS[k][0].replace("¹", "").replace("Test ", "") for k in DELTA_KEYS]
+    lines = ["| Head | Loss | " + " | ".join(f"Δ {t}" for t in titles) + " |", "|---|---|" + "---:|" * len(DELTA_KEYS)]
+    for s in others:
+        cells = []
+        for k in DELTA_KEYS:
+            _, fn, digits = METRICS[k]
+            m, sd, n = paired_delta(base, s, fn)
+            cells.append("–" if not n else (f"{m:+.{digits}f} ± {sd:.{digits}f}" if n > 1 else f"{m:+.{digits}f}"))
+        lines.append(f"| {HEAD_TITLES[s.arch]} | {LOSS_NAMES.get(s.loss, s.loss)} | " + " | ".join(cells) + " |")
+    return "\n".join(lines)
+
+
+def routing_summary(settings: Dict[str, Setting]) -> Optional[str]:
+    """How concentrated the MoE router is: toxic comments vs clean comments."""
+    toxic, clean, n_runs, n_experts = [], [], 0, 0
+    for s in settings.values():
+        if s.encoder != MAIN_ENCODER or s.arch != "moe":
+            continue
+        for r in s.runs:
+            g = r["test"].get("gates", {}).get("mean_gate", {})
+            if "toxic" not in g or "clean" not in g:
+                continue
+            top2 = np.argsort(g["toxic"])[-2:]  # the two experts used most by toxic comments
+            clean.append(float(np.sum(np.asarray(g["clean"])[top2])))
+            toxic += [float(np.sum(np.asarray(g[lab])[top2])) for lab in LABELS if lab in g]
+            n_runs, n_experts = n_runs + 1, len(g["clean"])
+    if not n_runs:
+        return None
+    text = (
+        f"**Routing.** Across all {n_runs} MoE runs, comments carrying any toxic label put on average "
+        f"{np.mean(toxic):.0%} (minimum {np.min(toxic):.0%}) of their router weight on the same two experts, "
+        f"whatever the kind of toxicity, while clean comments put {np.mean(clean):.0%} on those two experts "
+        f"(uniform routing would be {2 / n_experts:.0%})."
+    )
+    if np.mean(toxic) >= 0.7 and np.mean(clean) <= 0.45:
+        text += " The router learned a toxic-vs-clean split, not experts for specific kinds of toxicity."
+    return text
+
+
 def details_table(settings: List[Setting]) -> str:
     lines = [
         "| Setting | Seeds | Best epoch per seed | Min / run | Precision | GPU |",
@@ -264,10 +308,21 @@ def summary_markdown(settings: Dict[str, Setting], figure_prefix: str, figure_di
     parts = [
         f"Trained on {d['train']:,} comments ({d['train_fraction']:.0%} of `train.csv` minus a {d['val']:,}-comment "
         f"validation split) and evaluated on the **{d['test']:,}-comment official Kaggle test set**. F1 thresholds are "
-        f"tuned per label on the validation split, never on test. {seed_note} Best mean per column in bold.",
+        f"tuned per label on the validation split, never on test. {seed_note} Best mean per column in bold; the paired "
+        "table shows which differences are larger than seed-to-seed noise.",
     ]
-    if BASELINE in settings and HEADLINE in settings:
-        parts += ["", *delta_lines(settings[BASELINE], settings[HEADLINE])]
+    if BASELINE in settings and len(main) > 1:
+        n = settings[BASELINE].n
+        parts += [
+            "",
+            f"**Difference from the baseline (BERT + linear head + BCE), paired by seed.** Positive = better than the "
+            f"baseline. {'Mean ± std over ' + str(n) + ' seeds.' if n > 1 else 'Single seed.'}",
+            "",
+            paired_table(settings[BASELINE], [x for x in main if x.name != BASELINE]),
+        ]
+    routing = routing_summary(settings)
+    if routing:
+        parts += ["", routing]
     if main:
         parts += [
             "",
@@ -305,7 +360,7 @@ def summary_markdown(settings: Dict[str, Setting], figure_prefix: str, figure_di
             per_label_table(settings[BASELINE], settings[HEADLINE]),
         ]
     figs = [
-        ("ablation", "Loss × head ablation on the test set"),
+        ("ablation", "Each setting minus the BERT + BCE baseline, paired by seed"),
         ("encoders", "BERT-base vs DeBERTa-v3-base"),
         ("per_label_f1", "Per-label F1, baseline vs MoE + CB-focal"),
         ("pr_curves", "Precision–recall curves on the test set"),
@@ -392,46 +447,57 @@ def _zoom(ax, vals):
 
 
 def fig_ablation(plt, settings: Dict[str, Setting], th, out: Path):
-    main = [s for s in settings.values() if s.encoder == MAIN_ENCODER]
-    losses = [l for l in LOSS_ORDER if any(s.loss == l for s in main)]
-    archs = [a for a in ("bert", "moe") if any(s.arch == a for s in main)]
-    fig, axes = _figure(plt, th, 12, 4.2, ncols=3)
-    fig.subplots_adjust(top=0.72, bottom=0.2, left=0.05, right=0.99, wspace=0.28)
-    handles: list = []
-    for ax, key in zip(axes, ["roc", "pr", "f1"]):
+    """Forest plot: each setting minus the baseline, paired by seed (mean ± 1 std)."""
+    from matplotlib.lines import Line2D
+    from matplotlib.ticker import FormatStrFormatter, MaxNLocator
+
+    base = settings[BASELINE]
+    others = [x for x in sorted(settings.values(), key=sort_key) if x.encoder == MAIN_ENCODER and x.name != BASELINE]
+    keys = ["roc", "pr", "f1"]
+    height = 2.0 + 0.42 * len(others)
+    fig, axes = _figure(plt, th, 12, height, ncols=3, sharey=True)
+    fig.subplots_adjust(top=1 - 1.2 / height, bottom=0.35 / height + 0.04, left=0.2, right=0.98, wspace=0.12)
+    y = np.arange(len(others))[::-1]
+    for ax, key in zip(axes, keys):
         title, fn, digits = METRICS[key]
-        _style(ax, th)
-        series = []
-        for arch in archs:
-            found = [next((s for s in main if s.arch == arch and s.loss == l), None) for l in losses]
-            series.append(
-                (
-                    arch,
-                    [s.mean(fn) if s else np.nan for s in found],
-                    [s.std(fn) if s else 0.0 for s in found],
-                )
+        _style(ax, th, ygrid=False, xgrid=True)
+        ax.axvline(0, color=th["ink2"], linewidth=1, zorder=1)
+        lim = 0.0
+        for yi, setting in zip(y, others):
+            m, sd, n = paired_delta(base, setting, fn)
+            if not n:
+                continue
+            color = th["series"][setting.arch]
+            ax.errorbar(
+                m,
+                yi,
+                xerr=sd,
+                fmt="o",
+                color=color,
+                ecolor=color,
+                elinewidth=2,
+                capsize=0,
+                markersize=7,
+                markeredgecolor=th["surface"],
+                markeredgewidth=1.5,
+                zorder=3,
             )
-        h, vals, best = _grouped_bars(ax, th, [LOSS_NAMES[l].replace("Class-balanced", "CB") for l in losses], series)
-        handles = handles or h
-        _zoom(ax, vals)
-        if best[1] is not None:
-            ax.text(
-                best[1],
-                best[0] + best[2],
-                f"{best[0]:.{digits}f}",
-                ha="center",
-                va="bottom",
-                fontsize=8.5,
-                color=th["ink"],
-                fontweight="bold",
-            )
-        ax.set_title(title, loc="left", fontsize=10, color=th["ink"], pad=8)
-    n = max(s.n for s in main)
-    sub = "Higher is better. Y-axes are zoomed; the best mean in each panel is labelled."
+            lim = max(lim, abs(m) + sd)
+        lim = lim * 1.3 or 10**-digits
+        ax.set_xlim(-lim, lim)
+        ax.xaxis.set_major_locator(MaxNLocator(nbins=4, symmetric=True))
+        ax.xaxis.set_major_formatter(FormatStrFormatter(f"%+.{digits}f"))
+        ax.tick_params(axis="x", labelsize=8)
+        ax.set_title(f"Δ {title.replace('Test ', 'test ')}", loc="left", fontsize=10, color=th["ink"], pad=8)
+    axes[0].set_yticks(y, [f"{HEAD_TITLES[x.arch]}, {LOSS_NAMES.get(x.loss, x.loss)}" for x in others], fontsize=9)
+    axes[0].set_ylim(-0.7, len(others) - 0.3)
+    n = base.n
+    sub = "Each setting minus BERT + linear head + BCE on the same seed. Right of 0 = better than the baseline."
     if n > 1:
-        sub += f" Bars: mean of {n} seeds, whiskers: ±1 std."
-    _title(fig, th, "Loss × head ablation (BERT-base)", sub)
-    _legend(fig, th, handles, [f"BERT + {HEAD_NAMES[a]}" for a in archs], y=0.86)
+        sub += f" Dot: mean of {n} seeds; line: ±1 std."
+    _title(fig, th, "Difference from the BERT + BCE baseline", sub)
+    handles = [Line2D([], [], marker="o", linestyle="", color=th["series"][a], markersize=7) for a in ("bert", "moe")]
+    _legend(fig, th, handles, ["Linear head", "MoE head"], y=1 - 0.62 / height)
     fig.savefig(out, dpi=160, facecolor=th["surface"])
     plt.close(fig)
 
@@ -578,7 +644,7 @@ def fig_routing(plt, settings: Dict[str, Setting], th, out: Path):
         fig,
         th,
         f"Expert routing (MoE + CB-focal{seed})",
-        "Mean router weight per expert, over test comments with each label.",
+        "Mean router weight per expert, over test comments with each label. Expert numbers are arbitrary per seed.",
     )
     fig.savefig(out, dpi=160, facecolor=th["surface"])
     plt.close(fig)
@@ -595,7 +661,7 @@ def make_figures(settings: Dict[str, Setting], fig_dir: Path) -> List[Path]:
     main = [s for s in settings.values() if s.encoder == MAIN_ENCODER]
     has_pair = BASELINE in settings and HEADLINE in settings
     jobs: list = [
-        ("ablation", fig_ablation, len(main) >= 2),
+        ("ablation", fig_ablation, BASELINE in settings and len(main) >= 2),
         ("encoders", fig_encoders, len({s.encoder for s in settings.values()}) > 1),
         ("per_label_f1", fig_per_label, has_pair),
         ("pr_curves", fig_pr_curves, has_pair),

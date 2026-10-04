@@ -8,6 +8,10 @@ trained on a 1/20 random sample of `train.csv` (7,979 comments).
 This page records what that version found, what was wrong with it, and how v2 fixes each
 problem. Reviewing your own earlier work critically is part of the point.
 
+**Outcome.** With these problems fixed and the full dataset, the course project's main conclusion
+did not hold up: weighted losses and the MoE head do not beat plain BERT + BCE once thresholds are
+tuned on validation data. See the [README](../README.md) for the 24-run study.
+
 ## What the course version found
 
 All numbers below were traced back to the original notebook outputs. They are macro-F1 unless

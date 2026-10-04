@@ -1,9 +1,0 @@
-# Optional follow-up: MoE design choices, all with class-balanced focal loss.
-# Run with:  python scripts/run_ablation.py --config configs/moe_ablation.yaml
-base: base.yaml
-seeds: [42, 43, 44]
-runs:
-  - {name: moe_cbfocal_dense,     arch: moe, loss: cb_focal, top_k: 0}
-  - {name: moe_cbfocal_noaux,     arch: moe, loss: cb_focal, aux_loss_weight: 0.0}
-  - {name: moe_cbfocal_4experts,  arch: moe, loss: cb_focal, num_experts: 4}
-  - {name: moe_cbfocal_beta999,   arch: moe, loss: cb_focal, cb_beta: 0.999}

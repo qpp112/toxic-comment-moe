@@ -14,6 +14,7 @@ from torch.utils.data import DataLoader
 from .metrics import evaluate
 
 NO_DECAY = ("bias", "LayerNorm.weight", "layer_norm.weight", "norm.weight")
+MAX_BAD_STEPS = 20  # abort a run after this many NaN/inf steps instead of training on garbage
 
 
 def build_optimizer(model, lr: float, head_lr: float, weight_decay: float) -> torch.optim.Optimizer:
@@ -37,19 +38,24 @@ def linear_warmup_decay(optimizer, warmup_steps: int, total_steps: int):
 
 
 def resolve_amp_dtype(cfg, device: torch.device) -> Optional[torch.dtype]:
-    """Mixed-precision dtype to use, or None for full fp32.
+    """Mixed-precision dtype to use, or None for full precision (fp32, TF32 matmuls on Ampere+).
 
-    bf16 on Ampere or newer GPUs (A100, L4, H100): same speed as fp16, no loss scaling,
-    no overflow. fp16 + GradScaler on older GPUs (T4, V100). DeBERTa-v3 is known to
-    overflow in fp16, so it falls back to fp32 when bf16 is unavailable.
+    * bf16 on Ampere or newer GPUs (A100, L4, H100): same speed as fp16, no loss scaling.
+    * fp16 + GradScaler on older GPUs (T4, V100).
+    * DeBERTa-v3 always runs in full precision unless ``amp_dtype`` is set explicitly:
+      it produced NaN losses within its first few hundred steps under bf16 autocast, and it is known
+      to overflow in fp16.
     """
     if not cfg.fp16 or device.type != "cuda":
         return None
-    native_bf16 = torch.cuda.get_device_capability(device)[0] >= 8
-    if cfg.amp_dtype == "bf16" or (cfg.amp_dtype == "auto" and native_bf16):
+    if cfg.amp_dtype == "bf16":
         return torch.bfloat16
+    if cfg.amp_dtype == "fp16":
+        return torch.float16
     if "deberta" in str(cfg.encoder).lower():
         return None
+    if torch.cuda.get_device_capability(device)[0] >= 8:
+        return torch.bfloat16
     return torch.float16
 
 
@@ -121,6 +127,22 @@ def train(
     scaler = _grad_scaler(amp_dtype == torch.float16)  # loss scaling is only needed for fp16
 
     best_score, best_state, best_epoch, history = -math.inf, None, 0, []
+    bad_steps = 0
+
+    def bad_step(epoch: int, step: int, what: str) -> None:
+        nonlocal bad_steps
+        bad_steps += 1
+        optimizer.zero_grad(set_to_none=True)  # never apply a NaN/inf update
+        if bad_steps == 1:
+            log(f"WARNING: non-finite {what} at epoch {epoch + 1} step {step + 1}; skipping that update")
+        if bad_steps >= MAX_BAD_STEPS:
+            precision = {None: "fp32", torch.bfloat16: "bf16", torch.float16: "fp16"}[amp_dtype]
+            raise FloatingPointError(
+                f"{cfg.name}: {bad_steps} training steps had a NaN/inf {what} (precision {precision}). "
+                "Stopping this run early instead of training on garbage. "
+                "Try full precision with --set fp16=false, or a lower learning rate."
+            )
+
     for epoch in range(cfg.epochs):
         if hasattr(train_loader.batch_sampler, "set_epoch"):
             train_loader.batch_sampler.set_epoch(epoch)
@@ -134,22 +156,29 @@ def train(
             with _autocast(device, amp_dtype):
                 out = model(input_ids, attention_mask)
             task_loss = loss_fn(out.logits.float(), labels)
+            if not torch.isfinite(task_loss):
+                bad_step(epoch, step, "loss")
+                continue
             loss = task_loss
             if out.aux_loss is not None and cfg.aux_loss_weight > 0:
                 loss = loss + cfg.aux_loss_weight * out.aux_loss.float()
-                running_aux += float(out.aux_loss)
+                running_aux += out.aux_loss.detach().item()
             scaler.scale(loss / cfg.grad_accum_steps).backward()
 
             is_update = (step + 1) % cfg.grad_accum_steps == 0 or (step + 1) == len(train_loader)
             if is_update:
                 scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.max_grad_norm)
-                scaler.step(optimizer)
-                scaler.update()
-                optimizer.zero_grad(set_to_none=True)
+                grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.max_grad_norm)
+                if not scaler.is_enabled() and not torch.isfinite(grad_norm):
+                    # with fp16 the GradScaler already skips inf/NaN steps and lowers its scale
+                    bad_step(epoch, step, "gradient")
+                else:
+                    scaler.step(optimizer)
+                    scaler.update()
+                    optimizer.zero_grad(set_to_none=True)
                 scheduler.step()
 
-            running += float(task_loss)
+            running += task_loss.detach().item()
             seen += 1
             if cfg.log_every and (step + 1) % cfg.log_every == 0:
                 rate = seen / max(time.time() - t0, 1e-9)
