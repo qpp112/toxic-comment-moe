@@ -1,7 +1,16 @@
 import numpy as np
 import pytest
 
-from toxic_moe.metrics import evaluate, gate_statistics, pr_curves, tune_thresholds
+from toxic_moe import LABELS
+from toxic_moe.metrics import (
+    evaluate,
+    gate_statistics,
+    label_gate_statistics,
+    mean_pairwise_tv,
+    pr_curves,
+    routing_statistics,
+    tune_thresholds,
+)
 
 
 def _toy(n=2000, seed=0):
@@ -67,3 +76,38 @@ def test_gate_statistics_rows_sum_to_one():
     for row in stats["mean_gate"].values():
         assert sum(row) == pytest.approx(1.0, abs=1e-3)
     assert sum(stats["top1_share"]) == pytest.approx(1.0, abs=1e-3)
+
+
+def test_mean_pairwise_tv_extremes():
+    assert mean_pairwise_tv(np.array([[0.5, 0.5], [0.5, 0.5]])) == pytest.approx(0.0)
+    assert mean_pairwise_tv(np.eye(3)) == pytest.approx(1.0)
+    assert mean_pairwise_tv(np.array([[1.0, 0.0]])) == 0.0
+
+
+def test_gate_statistics_label_divergence():
+    y, _ = _toy(2000)
+    same = np.tile([0.7, 0.1, 0.1, 0.1], (len(y), 1))
+    assert gate_statistics(y, same)["label_divergence"] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_label_gate_statistics_detects_label_specific_routing():
+    y, _ = _toy(2000)
+    n = len(y)
+    shared = np.tile([0.7, 0.1, 0.1, 0.1], (n, 6, 1))  # every label uses the same mixture
+    stats = label_gate_statistics(y, shared)
+    assert stats["within_comment_divergence"] == pytest.approx(0.0, abs=1e-6)
+    assert stats["label_divergence"] == pytest.approx(0.0, abs=1e-6)
+    own = np.zeros((n, 6, 6))
+    own[:, np.arange(6), np.arange(6)] = 1.0  # label l always uses expert l
+    stats = label_gate_statistics(y, own)
+    assert stats["within_comment_divergence"] == pytest.approx(1.0)
+    assert stats["label_divergence"] == pytest.approx(1.0)
+    assert np.allclose(stats["label_gates"]["threat"], [0, 0, 0, 1, 0, 0])
+    assert set(stats["label_gates_all"]) == set(LABELS)
+
+
+def test_routing_statistics_dispatches_on_shape():
+    y, _ = _toy(300)
+    rng = np.random.default_rng(0)
+    assert "mean_gate" in routing_statistics(y, rng.dirichlet(np.ones(4), size=300))
+    assert "label_gates" in routing_statistics(y, rng.dirichlet(np.ones(4), size=(300, 6)))

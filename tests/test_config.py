@@ -21,6 +21,8 @@ def test_defaults_are_valid():
         {"val_fraction": 1.0},
         {"pooling": "max"},
         {"amp_dtype": "fp8"},
+        {"mlp_hidden": 0},
+        {"arch": "transformer"},
     ],
 )
 def test_invalid_values_rejected(bad):
@@ -74,8 +76,27 @@ def test_encoder_study_parses():
     assert {r.encoder for r in runs} == {"microsoft/deberta-v3-base"}
 
 
-def test_moe_ablation_parses():
-    assert len(load_ablation(ROOT / "configs" / "moe_ablation.yaml")) == 12
+def test_follow_up_studies_parse():
+    heads = load_ablation(ROOT / "configs" / "heads.yaml")
+    assert len(heads) == 12 and {r.study for r in heads} == {"heads"} and {r.loss for r in heads} == {"bce"}
+    assert {r.arch for r in heads} == {"mmoe", "label_attn", "mlp", "moe"}
+    assert not any(r.freeze_encoder for r in heads) and {r.split_seed for r in heads} == {42}
+    assert {r.aux_loss_weight for r in heads if r.group == "moe_bce_noaux"} == {0.0}
+    assert sorted(r.name for r in heads if r.save_checkpoint) == ["labelattn_bce_s42", "mmoe_bce_s42"]
+    assert all(r.title for r in heads)
+    probes = load_ablation(ROOT / "configs" / "probes.yaml")
+    assert len(probes) == 6 and all(r.freeze_encoder and r.study == "probes" for r in probes)
+    assert [r.pooling for r in probes if r.group == "probe_linear_mean"] == ["mean"]
+    assert {r.arch for r in probes} == {"bert", "mlp", "moe", "mmoe", "label_attn"}
+
+
+def test_common_block_applies_to_every_run_but_runs_win(tmp_path):
+    p = tmp_path / "a.yaml"
+    p.write_text(
+        "base: {epochs: 1}\ncommon: {epochs: 2, loss: focal}\nruns:\n  - {name: x}\n  - {name: y, epochs: 3}\n"
+    )
+    x, y = load_ablation(p)
+    assert (x.epochs, x.loss, y.epochs, y.loss) == (2, "focal", 3, "focal")
 
 
 def test_load_config_from_yaml(tmp_path):

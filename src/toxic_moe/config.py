@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
-ARCHS = ("bert", "moe")
+ARCHS = ("bert", "mlp", "moe", "mmoe", "label_attn")  # classification heads, see models.py
 LOSSES = ("bce", "weighted_bce", "focal", "cb_focal")
 AMP_DTYPES = ("auto", "bf16", "fp16")
 
@@ -19,6 +19,8 @@ class Config:
     # --- identity -----------------------------------------------------------
     name: str = "bert_bce"
     group: Optional[str] = None  # runs that differ only by seed share a group (e.g. "bert_bce")
+    title: Optional[str] = None  # human-readable label for reports, e.g. "MoE head, no load balancing"
+    study: Optional[str] = None  # which report table the run belongs to ("heads", "probes", ...); None = main study
 
     # --- data ---------------------------------------------------------------
     data_dir: str = "data"
@@ -28,14 +30,19 @@ class Config:
     max_length: int = 128
 
     # --- model --------------------------------------------------------------
-    arch: str = "bert"  # "bert" (linear head) | "moe" (mixture-of-experts head)
+    # head: "bert" = linear | "mlp" = one hidden layer | "moe" = mixture of experts, one router per comment
+    #       "mmoe" = multi-gate MoE, one gate per label | "label_attn" = label-wise attention over tokens
+    arch: str = "bert"
     encoder: str = "bert-base-uncased"  # any HF encoder name or local path
-    pooling: str = "cls"  # "cls" | "mean"
+    freeze_encoder: bool = False  # True = train the head only, on frozen encoder features (a "probe")
+    pooling: str = "cls"  # "cls" | "mean" (ignored by label_attn, which pools per label)
     dropout: float = 0.1
-    num_experts: int = 6
-    expert_hidden: int = 256
-    top_k: int = 2  # experts used per comment; 0 = dense (all experts)
-    aux_loss_weight: float = 0.01  # load-balancing loss coefficient (MoE only)
+    num_experts: int = 6  # moe, mmoe
+    expert_hidden: int = 256  # moe, mmoe
+    top_k: int = 2  # moe: experts used per comment; 0 = dense (all experts)
+    aux_loss_weight: float = 0.01  # moe: load-balancing loss coefficient
+    mlp_hidden: int = 1536  # mlp: 6 x 256, so the head has about as many parameters as the MoE head
+    attn_hidden: int = 256  # label_attn: size of the attention projection
 
     # --- loss ---------------------------------------------------------------
     loss: str = "bce"  # "bce" | "weighted_bce" | "focal" | "cb_focal"
@@ -79,6 +86,8 @@ class Config:
             raise ValueError("val_fraction must be in (0, 1)")
         if self.top_k < 0 or self.top_k > self.num_experts:
             raise ValueError("top_k must be in [0, num_experts]")
+        if min(self.num_experts, self.expert_hidden, self.mlp_hidden, self.attn_hidden) < 1:
+            raise ValueError("num_experts, expert_hidden, mlp_hidden and attn_hidden must be >= 1")
         if self.grad_accum_steps < 1:
             raise ValueError("grad_accum_steps must be >= 1")
         if self.amp_dtype not in AMP_DTYPES:
@@ -164,6 +173,7 @@ def load_ablation(
 
         base: base.yaml            # or an inline dict of Config fields
         seeds: [42, 43, 44]        # optional; omitted -> one run per entry, no suffix
+        common: {study: probes}    # optional; applied to every run, on top of base
         runs:
           - {name: bert_bce, arch: bert, loss: bce}
           ...
@@ -179,6 +189,7 @@ def load_ablation(
     base = spec.get("base", {})
     if isinstance(base, str):
         base = load_yaml(path.parent / base)
+    common = spec.get("common") or {}
     runs = spec.get("runs") or []
     if not runs:
         raise ValueError(f"No runs listed in {path}")
@@ -187,11 +198,11 @@ def load_ablation(
     configs = []
     if not seed_list:
         for run in runs:
-            configs.append(Config().replace(**{**base, **run, **(overrides or {})}))
+            configs.append(Config().replace(**{**base, **common, **run, **(overrides or {})}))
     else:
         for i, seed in enumerate(seed_list):
             for run in runs:
-                values = {**base, **run, **(overrides or {})}
+                values = {**base, **common, **run, **(overrides or {})}
                 values.update(group=values["name"], name=f"{values['name']}_s{seed}", seed=int(seed))
                 if i > 0:
                     values["save_checkpoint"] = False

@@ -20,7 +20,7 @@ from .batching import TokenizedDataset, encode_texts, make_loader
 from .config import Config, is_complete, save_config  # noqa: F401 (is_complete re-exported)
 from .data import describe, ensure_extracted, label_counts, load_test, load_train, subsample, train_val_split
 from .losses import build_loss
-from .metrics import evaluate, gate_statistics, pr_curves, tune_thresholds
+from .metrics import evaluate, pr_curves, routing_statistics, tune_thresholds
 from .models import build_model
 from .train import predict, resolve_amp_dtype, train
 
@@ -108,6 +108,8 @@ def run(cfg: Config, log=None, encoder=None) -> Dict[str, Any]:
     loss_fn = build_loss(cfg.loss, pos, total, gamma=cfg.focal_gamma, alpha=cfg.focal_alpha, beta=cfg.cb_beta)
     log(f"loss: {loss_fn.extra_repr()}")
     model = build_model(cfg, num_labels=len(LABELS), encoder=encoder)
+    head_params = sum(p.numel() for p in model.head.parameters())
+    log(f"head: {cfg.arch} ({head_params:,} parameters)" + (" | encoder frozen" if cfg.freeze_encoder else ""))
 
     # ---------------- train ----------------
     best_state, history, best_epoch = train(model, cfg, train_loader, val_loader, y_va, loss_fn, device, log)
@@ -125,14 +127,17 @@ def run(cfg: Config, log=None, encoder=None) -> Dict[str, Any]:
     test_metrics = evaluate(y_te, test_probs, thresholds)
     test_metrics["pr_curves"] = pr_curves(y_te, test_probs)
     if test_gates is not None:
-        test_metrics["gates"] = gate_statistics(y_te, test_gates)
+        test_metrics["gates"] = routing_statistics(y_te, test_gates)
 
     results = {
         "name": cfg.name,
         "group": cfg.group_name,
+        "title": cfg.title,
+        "study": cfg.study,
         "arch": cfg.arch,
         "loss": cfg.loss,
         "encoder": cfg.encoder,
+        "freeze_encoder": cfg.freeze_encoder,
         "seed": cfg.seed,
         "split_seed": cfg.split_seed,
         "best_epoch": best_epoch,

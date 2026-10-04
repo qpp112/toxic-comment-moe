@@ -9,6 +9,7 @@ import pytest
 torch = pytest.importorskip("torch")
 transformers = pytest.importorskip("transformers")
 
+from toxic_moe import LABELS  # noqa: E402
 from toxic_moe.batching import (  # noqa: E402
     Collator,
     LengthGroupedBatchSampler,
@@ -51,14 +52,24 @@ def test_tokenization_cache_round_trip(tiny_encoder_dir, tmp_path):
     assert all(np.array_equal(a, b) for a, b in zip(first, second))
 
 
-@pytest.mark.parametrize("arch,loss", [("bert", "bce"), ("moe", "cb_focal")])
-def test_run_end_to_end(arch, loss, data_dir, tiny_encoder_dir, tmp_path):
+@pytest.mark.parametrize(
+    "arch,loss,freeze",
+    [
+        ("bert", "bce", False),
+        ("moe", "cb_focal", False),
+        ("mmoe", "bce", False),
+        ("label_attn", "bce", False),
+        ("mlp", "bce", True),
+    ],
+)
+def test_run_end_to_end(arch, loss, freeze, data_dir, tiny_encoder_dir, tmp_path):
     cfg = Config(
         name=f"{arch}_{loss}",
         data_dir=str(data_dir),
         encoder=str(tiny_encoder_dir),
         arch=arch,
         loss=loss,
+        freeze_encoder=freeze,
         epochs=2,
         batch_size=16,
         eval_batch_size=32,
@@ -68,10 +79,12 @@ def test_run_end_to_end(arch, loss, data_dir, tiny_encoder_dir, tmp_path):
         num_workers=0,
         num_experts=3,
         expert_hidden=16,
+        mlp_hidden=16,
+        attn_hidden=8,
         top_k=2,
         log_every=0,
         output_dir=str(tmp_path / "results"),
-        save_checkpoint=(arch == "moe"),
+        save_checkpoint=(arch != "bert"),
         fp16=True,
     )
     results = run(cfg, log=lambda m: None)
@@ -81,20 +94,34 @@ def test_run_end_to_end(arch, loss, data_dir, tiny_encoder_dir, tmp_path):
     assert (
         saved["group"] == cfg.name
         and saved["seed"] == 42
+        and saved["freeze_encoder"] is freeze
         and saved["environment"]["precision"] in ("fp32", "fp16", "bf16")
     )
     assert 0.0 <= saved["test"]["roc_auc_mean"] <= 1.0
     assert len(saved["history"]) == 2 and saved["best_epoch"] in (1, 2)
     assert len(saved["test"]["thresholds"]) == 6
     assert (cfg.run_dir / "predictions.npz").exists()
+    gates = saved["test"].get("gates")
     if arch == "moe":
-        assert "gates" in saved["test"] and len(saved["test"]["gates"]["top1_share"]) == 3
+        assert len(gates["top1_share"]) == 3 and 0 <= gates["label_divergence"] <= 1
+    elif arch == "mmoe":
+        assert set(gates["label_gates_all"]) == set(LABELS) and 0 <= gates["within_comment_divergence"] <= 1
+        assert np.load(cfg.run_dir / "predictions.npz")["test_gates"].shape == (150, 6, 3)
+    else:
+        assert gates is None
+    if cfg.save_checkpoint:
         from toxic_moe.predict import ToxicityPredictor
 
         pred = ToxicityPredictor(cfg.run_dir, device="cpu")
         out = pred(["you idiot", "thanks for the edit"])
         assert set(out[0]["probabilities"]) == set(results["test"]["labels"])
-        assert len(out[0]["expert_weights"]) == 3
+        if arch == "moe":
+            assert len(out[0]["expert_weights"]) == 3
+        if arch == "mmoe":
+            assert set(out[0]["expert_weights"]) == set(LABELS) and len(out[0]["expert_weights"]["threat"]) == 3
+        if arch == "label_attn":
+            words = [w for w, _ in out[0]["evidence"]["toxic"]]
+            assert sorted(words) == ["idiot", "you"]  # special tokens dropped
 
 
 class BagOfEmbeddings(torch.nn.Module):
@@ -116,14 +143,15 @@ class BagOfEmbeddings(torch.nn.Module):
         return SimpleNamespace(last_hidden_state=self.embed(input_ids))
 
 
-def test_pipeline_learns_signal(data_dir, tiny_encoder_dir, tmp_path):
+@pytest.mark.parametrize("arch", ["moe", "mmoe", "label_attn"])
+def test_pipeline_learns_signal(arch, data_dir, tiny_encoder_dir, tmp_path):
     """On the synthetic data (a bag-of-words baseline scores ~0.99), the model must clearly learn."""
     vocab_size = len(transformers.AutoTokenizer.from_pretrained(tiny_encoder_dir))
     cfg = Config(
-        name="learn",
+        name=f"learn_{arch}",
         data_dir=str(data_dir),
         encoder=str(tiny_encoder_dir),  # tokenizer only
-        arch="moe",
+        arch=arch,
         loss="bce",
         pooling="mean",
         epochs=8,
@@ -133,6 +161,7 @@ def test_pipeline_learns_signal(data_dir, tiny_encoder_dir, tmp_path):
         max_length=32,
         num_workers=0,
         num_experts=3,
+        attn_hidden=16,
         log_every=0,
         output_dir=str(tmp_path / "r"),
         save_predictions=False,
@@ -140,9 +169,11 @@ def test_pipeline_learns_signal(data_dir, tiny_encoder_dir, tmp_path):
     torch.manual_seed(0)
     results = run(cfg, log=lambda m: None, encoder=BagOfEmbeddings(vocab_size))
     history = [round(h["val_roc_auc_mean"], 3) for h in results["history"]]
-    assert results["test"]["roc_auc_mean"] > 0.85, (
-        f"test ROC-AUC {results['test']['roc_auc_mean']:.3f}, val per epoch {history}"
-    )
+    # severe_toxic and obscene are coin flips within their group in the synthetic data (and have
+    # only a handful of test positives), so judge the four labels that words fully determine
+    clean = [LABELS.index(k) for k in ("toxic", "threat", "insult", "identity_hate")]
+    roc = float(np.mean([results["test"]["roc_auc"][j] for j in clean]))
+    assert roc > 0.85, f"test ROC-AUC {roc:.3f} on the clean labels, val mean per epoch {history}"
 
 
 class NaNEncoder(BagOfEmbeddings):

@@ -27,6 +27,11 @@ labelled test set (64k comments), with decision thresholds tuned on a validation
 * **The MoE router learns toxic vs. clean, not kinds of toxicity.** In all 12 MoE runs, comments
   with any toxic label send on average 90% of their routing weight to the same two of six experts,
   whatever the label; clean comments spread across all six.
+* **Why it ties: where the metrics are decided, the MoE head computes the same ranking as the
+  linear head.** Among each label's top-scored test comments it agrees with the linear head as
+  closely as a second linear-head seed does. [`docs/diagnosis.md`](docs/diagnosis.md) works this
+  out from the saved predictions and sets up two heads built around the problem (a multi-gate MoE
+  with one gate per label, and label-wise attention), implemented but not yet trained.
 
 [`docs/course_project.md`](docs/course_project.md) describes the original project and the bugs
 this version fixes.
@@ -112,18 +117,49 @@ Trained on 143,613 comments (100% of `train.csv` minus a 15,958-comment validati
 </details>
 <!-- RESULTS:END -->
 
-## Why it didn't help, and what I'd try next
+## Why it didn't help
+
+The full analysis is in [`docs/diagnosis.md`](docs/diagnosis.md); every number there comes from
+[`scripts/diagnose.py`](scripts/diagnose.py), run on the saved test predictions.
 
 * **Tuned thresholds absorb what reweighting does.** Up-weighting positives shifts every score
   upwards, which mainly changes where the 0.5 cut falls. Once each label gets its own threshold
   from validation data, there is little left for the loss to fix, and ranking quality (PR-AUC)
   gets slightly worse, most of all with inverse-frequency weights.
-* **The router split comments, not labels.** It sees one [CLS] vector per comment and learned to
-  separate toxic from clean comments. One possible reason (not tested
-  here) is that the rare labels mostly co-occur with `toxic`, so a per-comment router has little
-  incentive to separate them. Routing per label, or per token, would be the next thing to try.
-* **Next steps:** a stronger encoder ([`configs/encoders.yaml`](configs/encoders.yaml):
-  DeBERTa-v3-base, set up but not yet run); longer inputs than 128 tokens; per-label routing.
+* **The router split comments, not labels, and nothing is misrouted.** The rare labels mostly
+  co-occur with `toxic`, so one routing decision per comment can only separate toxic from clean.
+  The router does that well: none of the ~6,000 comments per seed that the linear head scores ≥ 0.9
+  for `toxic` is sent away from the two "toxic" experts. But the linear head already makes that split.
+* **Same function where it counts.** At the top of each label's ranking (twice as many comments as
+  the label has positives), the MoE and linear heads overlap as much as two linear-head seeds do
+  (0.88–0.95). They differ only in how they order clean comments, through expert-specific score
+  offsets that no metric sees.
+* **Most F1 differences are threshold noise.** With thresholds tuned on test itself (not a fair
+  score, but noise-free), the seed-to-seed spread of the macro-F1 differences shrinks about 4×, and
+  no MoE head beats the baseline.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/figures/diagnosis_agreement_dark.png">
+  <img alt="The MoE head agrees with the linear head at the top of every label's ranking and disagrees only among clean comments" src="docs/figures/diagnosis_agreement_light.png">
+</picture>
+
+**Follow-up (implemented, not yet trained).** [`configs/heads.yaml`](configs/heads.yaml)
+tests the explanation with four heads, each paired by seed with the runs above:
+
+| Run | Head | Tests |
+|---|---|---|
+| `mmoe_bce` | **Multi-gate MoE**: shared experts, one softmax gate per label ([Ma et al., 2018](https://dl.acm.org/doi/10.1145/3219819.3220007)) | Can labels pick different experts for the same comment? |
+| `labelattn_bce` | **Label-wise attention**: each label pools the token vectors with its own attention ([Vu et al., 2020](https://arxiv.org/abs/2007.06351)); shows which words drove each label | Is the single [CLS] vector the bottleneck? |
+| `mlp_bce` | One MLP with the MoE head's parameter count, no routing | Does extra capacity help at all? |
+| `moe_bce_noaux` | MoE head without the load-balancing loss | Does balancing force a bad split? |
+
+[`configs/probes.yaml`](configs/probes.yaml) trains the same heads on a frozen encoder: if they
+differ there but tie once BERT is fine-tuned, the fine-tuned encoder already does what the head
+was meant to do. The report adds both studies to the results above once they have run.
+
+**Other next steps:** a stronger encoder ([`configs/encoders.yaml`](configs/encoders.yaml):
+DeBERTa-v3-base, set up but not yet run), inputs longer than 128 tokens, and MoE layers inside
+the encoder, routed per token.
 
 ## The problem
 
@@ -225,7 +261,10 @@ python scripts/run_ablation.py --list    # show the 24 runs
 python scripts/run_ablation.py --only moe_cbfocal --seeds 42 --set train_fraction=0.01 epochs=1 output_dir=results_smoke
 python scripts/run_ablation.py                                   # main study -> results/<run>/metrics.json
 python scripts/run_ablation.py --config configs/encoders.yaml    # optional DeBERTa-v3 study
+python scripts/run_ablation.py --config configs/heads.yaml       # follow-up heads (docs/diagnosis.md)
+python scripts/run_ablation.py --config configs/probes.yaml      # the same heads on a frozen encoder
 python scripts/make_report.py --update-readme
+python scripts/diagnose.py --data data                           # diagnostics (CPU) -> results/diagnosis.md
 ```
 
 **Use a trained model:**
@@ -234,8 +273,10 @@ python scripts/make_report.py --update-readme
 python -m toxic_moe.predict --run-dir results/moe_cbfocal_s42 "Thanks for fixing the citation!" "I will find you"
 ```
 
-The output contains per-label probabilities, the labels that cross the validation-tuned
-thresholds, and the router weights over the six experts.
+The output contains per-label probabilities and the labels that cross the validation-tuned
+thresholds. Depending on the head, it also contains the router weights over the six experts
+(MoE), each label's gate weights (multi-gate MoE), or the words each label attended to most
+(label attention).
 
 ## Repository layout
 
@@ -243,17 +284,17 @@ thresholds, and the router weights over the six experts.
 src/toxic_moe/
   data.py         loading, test-label merge, stratified splits
   batching.py     cached tokenisation, dynamic padding, length-grouped batch sampler
-  models.py       BERT encoder + linear head / MoE head, load-balancing loss
+  models.py       BERT encoder + linear / MLP / MoE / multi-gate MoE / label-attention head
   losses.py       BCE, weighted BCE, focal, class-balanced focal
   metrics.py      ROC-AUC, PR-AUC, F1 with validation-tuned thresholds, router statistics
   train.py        AMP training loop, warm-up/decay schedule, best-epoch selection
   experiment.py   one end-to-end run -> results/<name>/
   predict.py      inference on raw text
-configs/          base settings, main ablation, DeBERTa study, optional MoE design study
-scripts/          run_ablation.py, make_report.py, download_data.sh
+configs/          base settings, main ablation, DeBERTa study, follow-up heads, frozen-encoder probes
+scripts/          run_ablation.py, make_report.py, diagnose.py, download_data.sh
 notebooks/        train_on_colab.ipynb
 tests/            CPU test suite (tiny random BERT, synthetic data)
-docs/             course-project write-up, figures
+docs/             diagnosis of the MoE result, course-project write-up, figures
 ```
 
 ## Credits
@@ -272,6 +313,9 @@ BERT/MoE part. It is new code, trained on the full dataset.
 * Cui et al. *Class-Balanced Loss Based on Effective Number of Samples.* CVPR 2019.
 * Shazeer et al. *Outrageously Large Neural Networks: The Sparsely-Gated Mixture-of-Experts Layer.* ICLR 2017.
 * Fedus, Zoph & Shazeer. *Switch Transformers.* JMLR 2022.
+* Ma et al. *Modeling Task Relationships in Multi-task Learning with Multi-gate Mixture-of-Experts.* KDD 2018.
+* Vu, Nguyen & Nguyen. *A Label Attention Model for ICD Coding from Clinical Text.* IJCAI 2020.
+* Komatsuzaki et al. *Sparse Upcycling: Training Mixture-of-Experts from Dense Checkpoints.* ICLR 2023.
 * Jigsaw / Conversation AI. *Toxic Comment Classification Challenge.* Kaggle, 2018.
 
 ## License

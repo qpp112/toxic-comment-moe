@@ -26,11 +26,30 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 from toxic_moe import LABELS  # noqa: E402
+from toxic_moe.metrics import mean_pairwise_tv  # noqa: E402
 
 LOSS_ORDER = ["bce", "weighted_bce", "focal", "cb_focal"]
 LOSS_NAMES = {"bce": "BCE", "weighted_bce": "Weighted BCE", "focal": "Focal", "cb_focal": "Class-balanced focal"}
-HEAD_NAMES = {"bert": "linear head", "moe": "MoE head"}
-HEAD_TITLES = {"bert": "Linear head", "moe": "MoE head"}
+HEAD_NAMES = {
+    "bert": "linear head",
+    "mlp": "MLP head",
+    "moe": "MoE head",
+    "mmoe": "multi-gate MoE head",
+    "label_attn": "label-attention head",
+}
+HEAD_TITLES = {k: v[0].upper() + v[1:] for k, v in HEAD_NAMES.items()}
+HEAD_ORDER = ["bert", "mlp", "moe", "mmoe", "label_attn"]
+STUDY_ORDER = ["main", "heads", "probes", "encoders"]
+MMOE = "mmoe_bce"
+PROBE_BASELINE = "probe_linear"
+# frozen-encoder probe -> the fine-tuned BERT-base + BCE setting with the same head
+FINE_TUNED_OF = {
+    "probe_linear": "bert_bce",
+    "probe_mlp": "mlp_bce",
+    "probe_moe": "moe_bce",
+    "probe_mmoe": MMOE,
+    "probe_labelattn": "labelattn_bce",
+}
 MAIN_ENCODER = "bert-base-uncased"
 ENCODER_NAMES = {"bert-base-uncased": "BERT-base", "microsoft/deberta-v3-base": "DeBERTa-v3-base"}
 BASELINE, HEADLINE = "bert_bce", "moe_cbfocal"
@@ -58,8 +77,10 @@ def per_label(key: str, j: int) -> Metric:
     return lambda r: r["test"][key][j]
 
 
-# Validated two-series categorical palette (slot 1 blue, slot 2 orange) + chart chrome,
-# stepped separately for light and dark surfaces.
+# Validated categorical palette (slot 1 blue, slot 2 orange, slot 3 aqua; the three pass
+# the colour-blindness checks as a set) + chart chrome, stepped separately for light and
+# dark surfaces. Heads are coloured by family: dense (linear, MLP) blue, routed (MoE,
+# multi-gate MoE) orange, attention aqua.
 THEMES = {
     "light": dict(
         surface="#fcfcfb",
@@ -68,7 +89,7 @@ THEMES = {
         muted="#898781",
         grid="#e1e0d9",
         axis="#c3c2b7",
-        series={"bert": "#2a78d6", "moe": "#eb6834"},
+        series={"bert": "#2a78d6", "mlp": "#2a78d6", "moe": "#eb6834", "mmoe": "#eb6834", "label_attn": "#1baf7a"},
         seq=["#fcfcfb", "#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#184f95", "#0d366b"],
     ),
     "dark": dict(
@@ -78,7 +99,7 @@ THEMES = {
         muted="#898781",
         grid="#2c2c2a",
         axis="#383835",
-        series={"bert": "#3987e5", "moe": "#d95926"},
+        series={"bert": "#3987e5", "mlp": "#3987e5", "moe": "#d95926", "mmoe": "#d95926", "label_attn": "#199e70"},
         seq=["#1a1a19", "#104281", "#184f95", "#1c5cab", "#256abf", "#3987e5", "#6da7ec", "#b7d3f6"],
     ),
 }
@@ -119,6 +140,18 @@ class Setting:
         return self.first.get("encoder", MAIN_ENCODER)
 
     @property
+    def study(self) -> str:
+        """Which table the setting belongs to; runs from before the field existed are main or encoders."""
+        return self.first.get("study") or ("main" if self.encoder == MAIN_ENCODER else "encoders")
+
+    @property
+    def title(self) -> str:
+        return (
+            self.first.get("title")
+            or f"{HEAD_TITLES.get(self.arch, self.arch)}, {LOSS_NAMES.get(self.loss, self.loss)}"
+        )
+
+    @property
     def seeds(self) -> List[Optional[int]]:
         return [r.get("seed") for r in self.runs]
 
@@ -154,10 +187,12 @@ def group_runs(runs: Dict[str, dict]) -> Dict[str, Setting]:
 
 def sort_key(s: Setting):
     return (
+        STUDY_ORDER.index(s.study) if s.study in STUDY_ORDER else 99,
         s.encoder != MAIN_ENCODER,
         s.encoder,
-        s.arch != "bert",
+        HEAD_ORDER.index(s.arch) if s.arch in HEAD_ORDER else 99,
         LOSS_ORDER.index(s.loss) if s.loss in LOSS_ORDER else 99,
+        s.name,
     )
 
 
@@ -230,17 +265,28 @@ def delta_lines(a: Setting, b: Setting) -> List[str]:
 DELTA_KEYS = ["roc", "pr", "f1", "rare"]
 
 
-def paired_table(base: Setting, others: List[Setting]) -> str:
+def _delta_cell(base: Setting, s: Setting, key: str) -> str:
+    _, fn, digits = METRICS[key]
+    m, sd, n = paired_delta(base, s, fn)
+    return "–" if not n else (f"{m:+.{digits}f} ± {sd:.{digits}f}" if n > 1 else f"{m:+.{digits}f}")
+
+
+def paired_table(
+    base: Setting,
+    others: List[Setting],
+    first_cols: Optional[Callable[[Setting], List[str]]] = None,
+    header: Optional[List[str]] = None,
+) -> str:
     """Each setting minus the baseline, computed per seed, then mean ± std over seeds."""
+    first_cols = first_cols or (lambda s: [HEAD_TITLES.get(s.arch, s.arch), LOSS_NAMES.get(s.loss, s.loss)])
+    header = header or ["Head", "Loss"]
     titles = [METRICS[k][0].replace("¹", "").replace("Test ", "") for k in DELTA_KEYS]
-    lines = ["| Head | Loss | " + " | ".join(f"Δ {t}" for t in titles) + " |", "|---|---|" + "---:|" * len(DELTA_KEYS)]
+    lines = [
+        "| " + " | ".join(header + [f"Δ {t}" for t in titles]) + " |",
+        "|" + "---|" * len(header) + "---:|" * len(DELTA_KEYS),
+    ]
     for s in others:
-        cells = []
-        for k in DELTA_KEYS:
-            _, fn, digits = METRICS[k]
-            m, sd, n = paired_delta(base, s, fn)
-            cells.append("–" if not n else (f"{m:+.{digits}f} ± {sd:.{digits}f}" if n > 1 else f"{m:+.{digits}f}"))
-        lines.append(f"| {HEAD_TITLES[s.arch]} | {LOSS_NAMES.get(s.loss, s.loss)} | " + " | ".join(cells) + " |")
+        lines.append("| " + " | ".join(first_cols(s) + [_delta_cell(base, s, k) for k in DELTA_KEYS]) + " |")
     return "\n".join(lines)
 
 
@@ -248,7 +294,7 @@ def routing_summary(settings: Dict[str, Setting]) -> Optional[str]:
     """How concentrated the MoE router is: toxic comments vs clean comments."""
     toxic, clean, n_runs, n_experts = [], [], 0, 0
     for s in settings.values():
-        if s.encoder != MAIN_ENCODER or s.arch != "moe":
+        if s.study != "main" or s.arch != "moe":
             continue
         for r in s.runs:
             g = r["test"].get("gates", {}).get("mean_gate", {})
@@ -269,6 +315,102 @@ def routing_summary(settings: Dict[str, Setting]) -> Optional[str]:
     if np.mean(toxic) >= 0.7 and np.mean(clean) <= 0.45:
         text += " The router learned a toxic-vs-clean split, not experts for specific kinds of toxicity."
     return text
+
+
+def label_divergence(run: dict) -> Optional[float]:
+    """How differently the labels use the experts (0 = same experts, 1 = disjoint), from metrics.json."""
+    g = run["test"].get("gates") or {}
+    if "label_divergence" in g:
+        return float(g["label_divergence"])
+    rows = [g["mean_gate"][k] for k in LABELS if k in g.get("mean_gate", {})]  # runs from before the field existed
+    return mean_pairwise_tv(np.array(rows)) if len(rows) > 1 else None
+
+
+def gating_summary(settings: Dict[str, Setting]) -> Optional[str]:
+    """Per-comment router (MoE) vs per-label gates (multi-gate MoE): do the labels use different experts?"""
+
+    def collect(arch: str, key: str) -> List[float]:
+        out = []
+        for s in settings.values():
+            if (
+                s.arch == arch
+                and s.study in ("main", "heads")
+                and s.encoder == MAIN_ENCODER
+                and not s.first.get("freeze_encoder")
+            ):
+                for r in s.runs:
+                    v = label_divergence(r) if key == "label" else (r["test"].get("gates") or {}).get(key)
+                    if v is not None:
+                        out.append(float(v))
+        return out
+
+    moe, mmoe = collect("moe", "label"), collect("mmoe", "label")
+    within = collect("mmoe", "within_comment_divergence")
+    if not mmoe or not moe:
+        return None
+    return (
+        "**Do the labels use different experts?** Mean distance between the expert mixtures of the six labels' "
+        f"positive comments (total variation; 0 = the same experts, 1 = disjoint experts): MoE router "
+        f"{np.mean(moe):.2f}, multi-gate MoE {np.mean(mmoe):.2f}. For one and the same comment, the multi-gate "
+        f"head's six label gates differ by {np.mean(within):.2f} on average; a per-comment router scores 0 by "
+        "construction."
+    )
+
+
+def heads_section(settings: Dict[str, Setting]) -> List[str]:
+    base = settings.get(BASELINE)
+    heads = [s for s in sorted(settings.values(), key=sort_key) if s.study == "heads"]
+    if base is None or not heads:
+        return []
+    rows = [settings[n] for n in ("moe_bce",) if n in settings] + heads
+    n = base.n
+    parts = [
+        "",
+        "**Follow-up: heads built around the MoE head's failure** (BERT-base, plain BCE, each minus the "
+        f"linear-head baseline on the same seed; {'mean ± std over ' + str(n) + ' seeds' if n > 1 else 'one seed'}). "
+        "Why these heads: `docs/diagnosis.md`.",
+        "",
+        paired_table(
+            base, rows, lambda s: [s.title, f"{s.first.get('head_parameters', 0) / 1e6:.2f}M"], ["Head", "Head params"]
+        ),
+    ]
+    gating = gating_summary(settings)
+    if gating:
+        parts += ["", gating]
+    return parts
+
+
+def probes_section(settings: Dict[str, Setting]) -> List[str]:
+    probes = [s for s in sorted(settings.values(), key=sort_key) if s.study == "probes"]
+    base = settings.get(PROBE_BASELINE)
+    if not probes or base is None:
+        return []
+    roc, pr = METRICS["roc"][1], METRICS["pr"][1]
+    lines = [
+        "| Head | Frozen: test ROC-AUC | Frozen: test PR-AUC | Frozen: Δ ROC-AUC vs linear | "
+        "Fine-tuned: Δ ROC-AUC vs linear |",
+        "|---|---:|---:|---:|---:|",
+    ]
+    for s in probes:
+        frozen = "baseline" if s.name == base.name else _delta_cell(base, s, "roc")
+        tuned = settings.get(FINE_TUNED_OF.get(s.name, ""))
+        if s.name == PROBE_BASELINE:
+            fine = "baseline"
+        elif s.name not in FINE_TUNED_OF:
+            fine = "–"
+        elif tuned is not None and BASELINE in settings:
+            fine = _delta_cell(settings[BASELINE], tuned, "roc")
+        else:
+            fine = "not run yet"
+        lines.append(f"| {s.title} | {_cell(s, roc, 4)} | {_cell(s, pr, 3)} | {frozen} | {fine} |")
+    return [
+        "",
+        "**Frozen encoder vs fine-tuned encoder.** The same heads trained on fixed BERT-base features "
+        "(`configs/probes.yaml`). A head that helps only when the encoder cannot adapt is doing work that "
+        "fine-tuning already does.",
+        "",
+        "\n".join(lines),
+    ]
 
 
 def details_table(settings: List[Setting]) -> str:
@@ -295,8 +437,8 @@ def picture(prefix: str, stem: str, alt: str) -> str:
 
 def summary_markdown(settings: Dict[str, Setting], figure_prefix: str, figure_dir: Path) -> str:
     ordered = sorted(settings.values(), key=sort_key)
-    main = [s for s in ordered if s.encoder == MAIN_ENCODER]
-    others = [s for s in ordered if s.encoder != MAIN_ENCODER]
+    main = [s for s in ordered if s.study == "main"]
+    others = [s for s in ordered if s.study == "encoders"]
     d = ordered[0].first["data"]
     seeds = sorted({x for s in ordered for x in s.seeds if x is not None})
     seed_note = (
@@ -332,8 +474,14 @@ def summary_markdown(settings: Dict[str, Setting], figure_prefix: str, figure_di
             "",
             "¹ Mean test F1 over the three rarest labels: `severe_toxic`, `threat`, `identity_hate`.",
         ]
+    parts += heads_section(settings)
+    parts += probes_section(settings)
     if others:
-        enc_rows = [s for s in ordered if (s.arch, s.loss) in (("bert", "bce"), ("moe", "cb_focal"))]
+        enc_rows = [
+            s
+            for s in ordered
+            if s.study in ("main", "encoders") and (s.arch, s.loss) in (("bert", "bce"), ("moe", "cb_focal"))
+        ]
         parts += [
             "",
             "**Stronger encoder**",
@@ -361,6 +509,9 @@ def summary_markdown(settings: Dict[str, Setting], figure_prefix: str, figure_di
         ]
     figs = [
         ("ablation", "Each setting minus the BERT + BCE baseline, paired by seed"),
+        ("heads", "Follow-up heads minus the BERT + BCE baseline, paired by seed"),
+        ("probes", "Head gains with a frozen vs a fine-tuned encoder"),
+        ("mmoe_gates", "Which experts each label's gate uses in the multi-gate MoE head"),
         ("encoders", "BERT-base vs DeBERTa-v3-base"),
         ("per_label_f1", "Per-label F1, baseline vs MoE + CB-focal"),
         ("pr_curves", "Precision–recall curves on the test set"),
@@ -446,28 +597,34 @@ def _zoom(ax, vals):
     ax.set_ylim(max(0, lo - pad), min(1, hi + pad))
 
 
-def fig_ablation(plt, settings: Dict[str, Setting], th, out: Path):
-    """Forest plot: each setting minus the baseline, paired by seed (mean ± 1 std)."""
+FAMILIES = [
+    ("Dense head", ("bert", "mlp")),
+    ("Routed head (MoE family)", ("moe", "mmoe")),
+    ("Attention head", ("label_attn",)),
+]
+
+
+def _forest(plt, th, base: Setting, rows: List[Setting], row_labels: List[str], title: str, sub: str, out: Path):
+    """Forest plot: each row minus the baseline, paired by seed (dot = mean, line = ±1 std)."""
     from matplotlib.lines import Line2D
     from matplotlib.ticker import FormatStrFormatter, MaxNLocator
 
-    base = settings[BASELINE]
-    others = [x for x in sorted(settings.values(), key=sort_key) if x.encoder == MAIN_ENCODER and x.name != BASELINE]
     keys = ["roc", "pr", "f1"]
-    height = 2.0 + 0.42 * len(others)
+    height = 2.0 + 0.42 * len(rows)
+    left = min(0.36, 0.06 + 0.0068 * max(len(t) for t in row_labels))
     fig, axes = _figure(plt, th, 12, height, ncols=3, sharey=True)
-    fig.subplots_adjust(top=1 - 1.2 / height, bottom=0.35 / height + 0.04, left=0.2, right=0.98, wspace=0.12)
-    y = np.arange(len(others))[::-1]
+    fig.subplots_adjust(top=1 - 1.2 / height, bottom=0.35 / height + 0.04, left=left, right=0.98, wspace=0.12)
+    y = np.arange(len(rows))[::-1]
     for ax, key in zip(axes, keys):
-        title, fn, digits = METRICS[key]
+        title_k, fn, digits = METRICS[key]
         _style(ax, th, ygrid=False, xgrid=True)
         ax.axvline(0, color=th["ink2"], linewidth=1, zorder=1)
         lim = 0.0
-        for yi, setting in zip(y, others):
+        for yi, setting in zip(y, rows):
             m, sd, n = paired_delta(base, setting, fn)
             if not n:
                 continue
-            color = th["series"][setting.arch]
+            color = th["series"].get(setting.arch, th["ink2"])
             ax.errorbar(
                 m,
                 yi,
@@ -488,21 +645,85 @@ def fig_ablation(plt, settings: Dict[str, Setting], th, out: Path):
         ax.xaxis.set_major_locator(MaxNLocator(nbins=4, symmetric=True))
         ax.xaxis.set_major_formatter(FormatStrFormatter(f"%+.{digits}f"))
         ax.tick_params(axis="x", labelsize=8)
-        ax.set_title(f"Δ {title.replace('Test ', 'test ')}", loc="left", fontsize=10, color=th["ink"], pad=8)
-    axes[0].set_yticks(y, [f"{HEAD_TITLES[x.arch]}, {LOSS_NAMES.get(x.loss, x.loss)}" for x in others], fontsize=9)
-    axes[0].set_ylim(-0.7, len(others) - 0.3)
-    n = base.n
+        ax.set_title(f"Δ {title_k.replace('Test ', 'test ')}", loc="left", fontsize=10, color=th["ink"], pad=8)
+    axes[0].set_yticks(y, row_labels, fontsize=9)
+    axes[0].set_ylim(-0.7, len(rows) - 0.3)
+    if base.n > 1:
+        sub += f" Dot: mean of {base.n} seeds; line: ±1 std."
+    _title(fig, th, title, sub)
+    present = {r.arch for r in rows} | {base.arch}
+    legend = []  # one entry per head family; named after the head when only one head of the family is shown
+    for family, archs in FAMILIES:
+        shown = [a for a in archs if a in present]
+        if shown:
+            legend.append((HEAD_TITLES[shown[0]] if len(shown) == 1 else family, shown[0]))
+    handles = [Line2D([], [], marker="o", linestyle="", color=th["series"][a], markersize=7) for _, a in legend]
+    _legend(fig, th, handles, [name for name, _ in legend], y=1 - 0.62 / height)
+    fig.savefig(out, dpi=160, facecolor=th["surface"])
+    plt.close(fig)
+
+
+def fig_ablation(plt, settings: Dict[str, Setting], th, out: Path):
+    base = settings[BASELINE]
+    rows = [x for x in sorted(settings.values(), key=sort_key) if x.study == "main" and x.name != BASELINE]
+    labels = [f"{HEAD_TITLES[x.arch]}, {LOSS_NAMES.get(x.loss, x.loss)}" for x in rows]
     sub = "Each setting minus BERT + linear head + BCE on the same seed. Right of 0 = better than the baseline."
-    if n > 1:
-        sub += f" Dot: mean of {n} seeds; line: ±1 std."
-    _title(fig, th, "Difference from the BERT + BCE baseline", sub)
-    handles = [Line2D([], [], marker="o", linestyle="", color=th["series"][a], markersize=7) for a in ("bert", "moe")]
-    _legend(fig, th, handles, ["Linear head", "MoE head"], y=1 - 0.62 / height)
+    _forest(plt, th, base, rows, labels, "Difference from the BERT + BCE baseline", sub, out)
+
+
+def fig_heads(plt, settings: Dict[str, Setting], th, out: Path):
+    base = settings[BASELINE]
+    rows = [settings[n] for n in ("moe_bce",) if n in settings]
+    rows += [x for x in sorted(settings.values(), key=sort_key) if x.study == "heads"]
+    sub = "BERT-base, plain BCE. Each head minus the linear head on the same seed. Right of 0 = better."
+    _forest(plt, th, base, rows, [x.title for x in rows], "Follow-up heads vs the linear head", sub, out)
+
+
+def fig_probes(plt, settings: Dict[str, Setting], th, out: Path):
+    """Dumbbell: gain over the linear head with a frozen encoder vs with a fine-tuned encoder."""
+    from matplotlib.lines import Line2D
+
+    roc = METRICS["roc"][1]
+    rows = []
+    for s in sorted(settings.values(), key=sort_key):
+        if s.study != "probes" or s.name == PROBE_BASELINE:
+            continue
+        frozen = paired_delta(settings[PROBE_BASELINE], s, roc)
+        tuned = settings.get(FINE_TUNED_OF.get(s.name, ""))
+        fine = paired_delta(settings[BASELINE], tuned, roc) if tuned is not None and BASELINE in settings else None
+        rows.append((s.title, frozen, fine))
+    height = 2.2 + 0.5 * len(rows)
+    fig, axes = _figure(plt, th, 9, height)
+    ax = axes[0]
+    fig.subplots_adjust(top=1 - 1.25 / height, bottom=0.55 / height + 0.04, left=0.26, right=0.97)
+    _style(ax, th, ygrid=False, xgrid=True)
+    ax.axvline(0, color=th["ink2"], linewidth=1, zorder=1)
+    y = np.arange(len(rows))[::-1]
+    c_frozen, c_fine = th["series"]["moe"], th["series"]["bert"]
+    for yi, (_, frozen, fine) in zip(y, rows):
+        points = [(frozen, c_frozen)]
+        if fine is not None and fine[2]:
+            points.append((fine, c_fine))
+            ax.plot([frozen[0], fine[0]], [yi, yi], color=th["axis"], linewidth=2, zorder=2)
+        for (m, sd, n), color in points:
+            if n:
+                ax.errorbar(m, yi, xerr=sd, fmt="o", color=color, ecolor=color, elinewidth=2, markersize=8,
+                            markeredgecolor=th["surface"], markeredgewidth=1.5, zorder=3)  # fmt: skip
+                ax.text(m, yi + 0.2, f"{m:+.4f}", ha="center", va="bottom", fontsize=8, color=th["ink2"])
+    ax.set_yticks(y, [r[0] for r in rows], fontsize=9)
+    ax.set_ylim(-0.6, len(rows) - 0.2)
+    ax.set_xlabel("Δ test ROC-AUC vs the linear head (same encoder setting)", color=th["ink2"], fontsize=9)
+    ax.tick_params(axis="x", labelsize=8)
+    _title(fig, th, "Does the head matter once the encoder is fine-tuned?",
+           "Frozen: head trained on fixed BERT-base features. Fine-tuned: encoder trained with the head.")  # fmt: skip
+    handles = [Line2D([], [], marker="o", linestyle="", color=c, markersize=8) for c in (c_frozen, c_fine)]
+    _legend(fig, th, handles, ["Frozen encoder", "Fine-tuned encoder"], y=1 - 0.68 / height)
     fig.savefig(out, dpi=160, facecolor=th["surface"])
     plt.close(fig)
 
 
 def fig_encoders(plt, settings: Dict[str, Setting], th, out: Path):
+    settings = {k: s for k, s in settings.items() if s.study in ("main", "encoders")}  # not probes / follow-ups
     encoders = sorted({s.encoder for s in settings.values()}, key=lambda e: (e != MAIN_ENCODER, e))
     combos = [("bert", "bce"), ("moe", "cb_focal")]
     fig, axes = _figure(plt, th, 9, 4.2, ncols=2)
@@ -606,20 +827,14 @@ def fig_pr_curves(plt, settings: Dict[str, Setting], th, out: Path):
     plt.close(fig)
 
 
-def fig_routing(plt, settings: Dict[str, Setting], th, out: Path):
+def _heatmap(plt, th, mat: np.ndarray, rows: List[str], title: str, sub: str, out: Path):
     from matplotlib.colors import LinearSegmentedColormap
 
-    # Expert indices are arbitrary per seed (any permutation is equivalent), so routing
-    # is shown for a single run rather than averaged.
-    r = settings[HEADLINE].first
-    gates = r["test"]["gates"]["mean_gate"]
-    rows = [k for k in ["all", "clean", *LABELS] if k in gates]
-    mat = np.array([gates[k] for k in rows])
     n_exp = mat.shape[1]
     cmap = LinearSegmentedColormap.from_list("seq", th["seq"])
-    fig, axes = _figure(plt, th, 2.4 + 0.85 * n_exp, 4.4)
+    fig, axes = _figure(plt, th, max(7.5, 2.4 + 0.85 * n_exp), 1.75 + 0.33 * len(rows))
     ax = axes[0]
-    fig.subplots_adjust(top=0.8, bottom=0.08, left=0.22, right=0.97)
+    fig.subplots_adjust(top=1 - 0.95 / (1.75 + 0.33 * len(rows)), bottom=0.08, left=0.22, right=0.97)
     ax.set_facecolor(th["surface"])
     im = ax.imshow(mat, cmap=cmap, vmin=0, vmax=max(float(mat.max()), 2.0 / n_exp), aspect="auto")
     for i in range(mat.shape[0]):
@@ -631,7 +846,7 @@ def fig_routing(plt, settings: Dict[str, Setting], th, out: Path):
                 e, i, f"{v:.2f}", ha="center", va="center", fontsize=8.5, color="#0b0b0b" if lum > 0.55 else "#ffffff"
             )
     ax.set_xticks(range(n_exp), [f"E{e + 1}" for e in range(n_exp)])
-    ax.set_yticks(range(len(rows)), [("all comments" if k == "all" else k) for k in rows])
+    ax.set_yticks(range(len(rows)), rows)
     ax.tick_params(length=0, labelcolor=th["ink2"], labelsize=9)
     for sp in ax.spines.values():
         sp.set_visible(False)
@@ -639,15 +854,43 @@ def fig_routing(plt, settings: Dict[str, Setting], th, out: Path):
     ax.set_yticks(np.arange(-0.5, len(rows), 1), minor=True)
     ax.grid(which="minor", color=th["surface"], linewidth=2)
     ax.tick_params(which="minor", length=0)
-    seed = f", seed {r['seed']}" if r.get("seed") is not None else ""
-    _title(
-        fig,
-        th,
-        f"Expert routing (MoE + CB-focal{seed})",
-        "Mean router weight per expert, over test comments with each label. Expert numbers are arbitrary per seed.",
-    )
+    _title(fig, th, title, sub)
     fig.savefig(out, dpi=160, facecolor=th["surface"])
     plt.close(fig)
+
+
+def fig_routing(plt, settings: Dict[str, Setting], th, out: Path):
+    # Expert indices are arbitrary per seed (any permutation is equivalent), so routing
+    # is shown for a single run rather than averaged.
+    r = settings[HEADLINE].first
+    gates = r["test"]["gates"]["mean_gate"]
+    rows = [k for k in ["all", "clean", *LABELS] if k in gates]
+    seed = f", seed {r['seed']}" if r.get("seed") is not None else ""
+    _heatmap(
+        plt,
+        th,
+        np.array([gates[k] for k in rows]),
+        [("all comments" if k == "all" else k) for k in rows],
+        f"Expert routing (MoE + CB-focal{seed})",
+        "Mean router weight per expert, over test comments with each label. Expert numbers are arbitrary per seed.",
+        out,
+    )
+
+
+def fig_mmoe_gates(plt, settings: Dict[str, Setting], th, out: Path):
+    r = settings[MMOE].first
+    gates = r["test"]["gates"]["label_gates"]
+    rows = [k for k in LABELS if k in gates]
+    seed = f", seed {r['seed']}" if r.get("seed") is not None else ""
+    _heatmap(
+        plt,
+        th,
+        np.array([gates[k] for k in rows]),
+        rows,
+        f"Per-label gates (multi-gate MoE{seed})",
+        "Each label's own gate weight per expert, averaged over the test comments carrying that label.",
+        out,
+    )
 
 
 def make_figures(settings: Dict[str, Setting], fig_dir: Path) -> List[Path]:
@@ -658,10 +901,14 @@ def make_figures(settings: Dict[str, Setting], fig_dir: Path) -> List[Path]:
 
     plt.rcParams.update({"font.family": "sans-serif", "font.sans-serif": ["DejaVu Sans", "Arial", "Helvetica"]})
     fig_dir.mkdir(parents=True, exist_ok=True)
-    main = [s for s in settings.values() if s.encoder == MAIN_ENCODER]
+    main = [s for s in settings.values() if s.study == "main"]
     has_pair = BASELINE in settings and HEADLINE in settings
+    mmoe = settings.get(MMOE)
     jobs: list = [
         ("ablation", fig_ablation, BASELINE in settings and len(main) >= 2),
+        ("heads", fig_heads, BASELINE in settings and any(s.study == "heads" for s in settings.values())),
+        ("probes", fig_probes, PROBE_BASELINE in settings and sum(s.study == "probes" for s in settings.values()) > 1),
+        ("mmoe_gates", fig_mmoe_gates, mmoe is not None and "label_gates" in (mmoe.first["test"].get("gates") or {})),
         ("encoders", fig_encoders, len({s.encoder for s in settings.values()}) > 1),
         ("per_label_f1", fig_per_label, has_pair),
         ("pr_curves", fig_pr_curves, has_pair),

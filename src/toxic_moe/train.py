@@ -76,7 +76,10 @@ def _grad_scaler(enabled: bool):
 def predict(
     model, loader: DataLoader, device: torch.device, amp_dtype: Optional[torch.dtype] = None
 ) -> Tuple[np.ndarray, Optional[np.ndarray]]:
-    """Return sigmoid probabilities (and MoE gates) in the dataset's original order."""
+    """Return sigmoid probabilities (and routing gates) in the dataset's original order.
+
+    Gates are (n, experts) for the MoE head and (n, labels, experts) for the multi-gate head.
+    """
     model.eval()
     n = len(loader.dataset)
     probs: Optional[np.ndarray] = None
@@ -94,7 +97,7 @@ def predict(
         if out.gates is not None:
             g = out.gates.float().cpu().numpy()
             if gates is None:
-                gates = np.zeros((n, g.shape[1]), dtype=np.float32)
+                gates = np.zeros((n, *g.shape[1:]), dtype=np.float32)
             gates[idx] = g
     assert probs is not None, "empty loader"
     return probs, gates
@@ -160,9 +163,10 @@ def train(
                 bad_step(epoch, step, "loss")
                 continue
             loss = task_loss
-            if out.aux_loss is not None and cfg.aux_loss_weight > 0:
-                loss = loss + cfg.aux_loss_weight * out.aux_loss.float()
-                running_aux += out.aux_loss.detach().item()
+            if out.aux_loss is not None:
+                running_aux += out.aux_loss.detach().item()  # logged even when not optimised (weight 0)
+                if cfg.aux_loss_weight > 0:
+                    loss = loss + cfg.aux_loss_weight * out.aux_loss.float()
             scaler.scale(loss / cfg.grad_accum_steps).backward()
 
             is_update = (step + 1) % cfg.grad_accum_steps == 0 or (step + 1) == len(train_loader)

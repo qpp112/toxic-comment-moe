@@ -1,0 +1,25 @@
+# Frozen-encoder probes: the five heads trained on FIXED BERT-base features.
+#
+# The fine-tuned study (ablation.yaml, heads.yaml) asks whether a head helps when the
+# 110M-parameter encoder can adapt to it. Here the encoder cannot adapt, so the head has to
+# do all the work. If the larger heads clearly beat the linear head here but tie with it
+# after fine-tuning, fine-tuning is already doing the job the MoE head was meant to do.
+#
+# Training only the head is cheaper (no backward pass through the encoder), so the probes
+# use a higher head learning rate and one more epoch than the fine-tuned runs. Everything
+# else is unchanged. An untrained [CLS] vector is a weak summary of a comment, so
+# probe_linear_mean (mean of the token vectors) separates "label attention pools the
+# tokens per label" from "any pooling over the tokens beats [CLS]".
+#
+# One seed by default: the differences between heads are expected to be large here.
+# Add seeds with --seeds 42 43 44.
+base: base.yaml
+seeds: [42]
+common: {study: probes, freeze_encoder: true, loss: bce, head_lr: 1.0e-3, epochs: 3}
+runs:
+  - {name: probe_linear,      arch: bert,       title: "Linear head"}
+  - {name: probe_linear_mean, arch: bert,       title: "Linear head, mean pooling", pooling: mean}
+  - {name: probe_mlp,         arch: mlp,        title: "MLP head"}
+  - {name: probe_moe,         arch: moe,        title: "MoE head"}
+  - {name: probe_mmoe,        arch: mmoe,       title: "Multi-gate MoE head"}
+  - {name: probe_labelattn,   arch: label_attn, title: "Label-wise attention head"}

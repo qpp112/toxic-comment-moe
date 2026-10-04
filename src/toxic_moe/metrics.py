@@ -116,12 +116,25 @@ def pr_curves(y: np.ndarray, p: np.ndarray, points: int = 101) -> Dict[str, Dict
     return curves
 
 
+def mean_pairwise_tv(rows: np.ndarray) -> float:
+    """Mean total-variation distance over all pairs of rows, each row a distribution over experts.
+
+    0 = every row puts its weight on the same experts; 1 = disjoint experts.
+    """
+    rows = np.asarray(rows, dtype=float)
+    if len(rows) < 2:
+        return 0.0
+    d = 0.5 * np.abs(rows[:, None, :] - rows[None, :, :]).sum(-1)
+    return float(d[np.triu_indices(len(rows), 1)].mean())
+
+
 def gate_statistics(y: np.ndarray, gates: np.ndarray, labels: List[str] = LABELS) -> Dict[str, Any]:
     """How the MoE router distributes comments over experts.
 
     Returns the mean gate weight per expert for all comments, for clean comments,
-    and for the comments carrying each label (rows), plus how often each expert
-    is the top-1 choice.
+    and for the comments carrying each label (rows), how often each expert is the
+    top-1 choice, and ``label_divergence``: the mean pairwise total-variation distance
+    between the labels' rows (0 = every label's comments go to the same experts).
     """
     y = np.asarray(y).astype(bool)
     gates = np.asarray(gates, dtype=float)
@@ -136,4 +149,40 @@ def gate_statistics(y: np.ndarray, gates: np.ndarray, labels: List[str] = LABELS
     return {
         "mean_gate": {k: v.round(5).tolist() for k, v in rows.items()},
         "top1_share": top1.round(5).tolist(),
+        "label_divergence": round(mean_pairwise_tv(np.array([rows[k] for k in labels if k in rows])), 5),
     }
+
+
+def label_gate_statistics(y: np.ndarray, gates: np.ndarray, labels: List[str] = LABELS) -> Dict[str, Any]:
+    """Routing of the multi-gate (MMoE) head, where every label has its own gate.
+
+    ``gates`` has shape (comments, labels, experts).
+
+    * ``label_gates[l]``: label ``l``'s mean gate over the comments that carry ``l``.
+    * ``label_gates_all[l]``: label ``l``'s mean gate over all comments.
+    * ``label_divergence``: mean pairwise total-variation distance between the
+      ``label_gates`` rows, on the same scale as :func:`gate_statistics`.
+    * ``within_comment_divergence``: the same distance between the six labels' gates *for
+      the same comment*, averaged over comments. A per-comment router scores 0 by
+      construction; this is what a multi-gate head can do that a per-comment router cannot.
+    """
+    y = np.asarray(y).astype(bool)
+    gates = np.asarray(gates, dtype=float)
+    own = {name: gates[y[:, j], j].mean(axis=0) for j, name in enumerate(labels) if y[:, j].any()}
+    overall = {name: gates[:, j].mean(axis=0) for j, name in enumerate(labels)}
+    n_labels = gates.shape[1]
+    within = [  # one label pair at a time keeps memory at O(comments x experts)
+        0.5 * np.abs(gates[:, a] - gates[:, b]).sum(-1).mean() for a in range(n_labels) for b in range(a + 1, n_labels)
+    ]
+    return {
+        "label_gates": {k: v.round(5).tolist() for k, v in own.items()},
+        "label_gates_all": {k: v.round(5).tolist() for k, v in overall.items()},
+        "label_divergence": round(mean_pairwise_tv(np.array(list(own.values()))), 5),
+        "within_comment_divergence": round(float(np.mean(within)) if within else 0.0, 5),
+    }
+
+
+def routing_statistics(y: np.ndarray, gates: np.ndarray, labels: List[str] = LABELS) -> Dict[str, Any]:
+    """:func:`gate_statistics` for (n, experts) gates, :func:`label_gate_statistics` for (n, labels, experts)."""
+    gates = np.asarray(gates)
+    return gate_statistics(y, gates, labels) if gates.ndim == 2 else label_gate_statistics(y, gates, labels)
