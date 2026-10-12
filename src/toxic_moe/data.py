@@ -97,6 +97,23 @@ def cut_tokens(ids: Sequence[int], budget: int, mode: str = "head") -> List[int]
     raise ValueError(f"Unknown truncation mode {mode!r}; expected 'head' or 'head_tail'")
 
 
+def special_token_ids(tokenizer, probe: str = "hello") -> Tuple[List[int], List[int]]:
+    """The ids a tokenizer puts before and after a single text, e.g. ([CLS], [SEP]) for BERT.
+
+    Found by encoding ``probe`` with and without special tokens. This works for every
+    tokenizer backend: transformers 5 removed ``build_inputs_with_special_tokens`` from
+    its default (Rust) tokenizers.
+    """
+    plain = list(tokenizer(probe, add_special_tokens=False)["input_ids"])
+    full = list(tokenizer(probe, add_special_tokens=True)["input_ids"])
+    if not plain:
+        raise ValueError(f"probe text {probe!r} encodes to nothing")
+    for start in range(len(full) - len(plain) + 1):
+        if full[start : start + len(plain)] == plain:
+            return full[:start], full[start + len(plain) :]
+    raise ValueError(f"cannot locate the text inside its encoding with special tokens ({type(tokenizer).__name__})")
+
+
 def stratify_keys(y: np.ndarray, min_count: int = 2) -> np.ndarray:
     """One key per label combination, with combinations rarer than ``min_count`` pooled.
 

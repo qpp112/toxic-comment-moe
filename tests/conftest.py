@@ -1,3 +1,4 @@
+import json
 import sys
 from pathlib import Path
 
@@ -75,14 +76,42 @@ def data_dir(tmp_path):
 
 @pytest.fixture
 def tiny_encoder_dir(tmp_path):
-    """A 2-layer, 32-dim BERT + word-level tokenizer saved to disk (no network needed)."""
+    """A 2-layer, 32-dim BERT + word-level tokenizer saved to disk (no network needed).
+
+    The tokenizer is written the way Hub checkpoints store it (tokenizer.json, vocab.txt and
+    tokenizer_config.json) and read back with AutoTokenizer, which works the same under
+    transformers 4 and 5. (Transformers 5 dropped the ``vocab_file`` constructor argument:
+    ``BertTokenizerFast(vocab_file=...)`` silently gives a 5-token vocabulary there.)
+    """
     transformers = pytest.importorskip("transformers")
+    tk = pytest.importorskip("tokenizers")
     vocab = ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]", ",", ".", '"', "second", "line", "with", "comma", *WORDS]
+    ids = {token: i for i, token in enumerate(vocab)}
     out = tmp_path / "tiny-bert"
     out.mkdir()
+
+    backend = tk.Tokenizer(tk.models.WordPiece(ids, unk_token="[UNK]"))
+    backend.normalizer = tk.normalizers.BertNormalizer(lowercase=True)
+    backend.pre_tokenizer = tk.pre_tokenizers.BertPreTokenizer()
+    backend.post_processor = tk.processors.TemplateProcessing(
+        single="[CLS] $A [SEP]",
+        pair="[CLS] $A [SEP] $B:1 [SEP]:1",
+        special_tokens=[("[CLS]", ids["[CLS]"]), ("[SEP]", ids["[SEP]"])],
+    )
+    backend.decoder = tk.decoders.WordPiece(prefix="##")
+    backend.add_special_tokens(vocab[:5])  # already in the vocabulary: marks them special, adds no ids
+    backend.save(str(out / "tokenizer.json"))
     (out / "vocab.txt").write_text("\n".join(vocab) + "\n")
-    tok = transformers.BertTokenizerFast(vocab_file=str(out / "vocab.txt"), do_lower_case=True)
-    tok.save_pretrained(out)
+    special = {
+        "unk_token": "[UNK]",
+        "sep_token": "[SEP]",
+        "pad_token": "[PAD]",
+        "cls_token": "[CLS]",
+        "mask_token": "[MASK]",
+    }
+    settings = {"tokenizer_class": "BertTokenizer", "do_lower_case": True, "model_max_length": 64, **special}
+    (out / "tokenizer_config.json").write_text(json.dumps(settings))
+
     config = transformers.BertConfig(
         vocab_size=len(vocab),
         hidden_size=32,
@@ -92,4 +121,8 @@ def tiny_encoder_dir(tmp_path):
         max_position_embeddings=64,
     )
     transformers.BertModel(config).save_pretrained(out)
+
+    tok = transformers.AutoTokenizer.from_pretrained(out)
+    assert len(tok) == len(vocab), f"the tiny tokenizer lost its vocabulary: {len(tok)} of {len(vocab)} tokens"
+    assert tok.convert_ids_to_tokens(tok("You idiot")["input_ids"]) == ["[CLS]", "you", "idiot", "[SEP]"]
     return out

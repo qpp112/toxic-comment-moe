@@ -12,7 +12,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset, Sampler
 
-from .data import cut_tokens
+from .data import cut_tokens, special_token_ids
 
 
 # ---------------------------------------------------------------------------
@@ -62,13 +62,13 @@ def encode_texts(
             enc = tokenizer(texts[start : start + chunk_size], truncation=True, max_length=max_length)
             ids.extend(np.asarray(x, dtype=np.int32) for x in enc["input_ids"])
     else:
-        budget = max_length - tokenizer.num_special_tokens_to_add(pair=False)
+        prefix, suffix = special_token_ids(tokenizer)
+        budget = max_length - len(prefix) - len(suffix)
         for start in range(0, len(texts), chunk_size):
             # the full comment first; the model never sees more than max_length tokens
             enc = tokenizer(texts[start : start + chunk_size], add_special_tokens=False, verbose=False)
             for body in enc["input_ids"]:
-                full = tokenizer.build_inputs_with_special_tokens(cut_tokens(body, budget, truncation))
-                ids.append(np.asarray(full, dtype=np.int32))
+                ids.append(np.asarray(prefix + cut_tokens(body, budget, truncation) + suffix, dtype=np.int32))
 
     if path is not None:
         offsets = np.zeros(len(ids) + 1, dtype=np.int64)

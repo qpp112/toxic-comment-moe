@@ -8,6 +8,7 @@ from toxic_moe.data import (
     label_counts,
     load_test,
     load_train,
+    special_token_ids,
     stratify_keys,
     subsample,
     train_val_split,
@@ -97,3 +98,19 @@ def test_cut_tokens_head_and_head_tail():
     assert cut_tokens(ids, 0, "head_tail") == []
     with pytest.raises(ValueError):
         cut_tokens(ids, 4, "middle")
+
+
+class _FakeTokenizer:
+    """Mimics ``tokenizer(text, add_special_tokens=...)`` with a fixed special-token template."""
+
+    def __init__(self, prefix, suffix):
+        self.prefix, self.suffix = prefix, suffix
+
+    def __call__(self, text, add_special_tokens=True):
+        body = [100 + len(word) for word in text.split()]
+        return {"input_ids": (self.prefix + body + self.suffix) if add_special_tokens else body}
+
+
+@pytest.mark.parametrize("prefix,suffix", [([101], [102]), ([0], [2]), ([], [1]), ([], [])])
+def test_special_token_ids_finds_the_template(prefix, suffix):
+    assert special_token_ids(_FakeTokenizer(prefix, suffix)) == (prefix, suffix)
