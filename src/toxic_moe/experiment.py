@@ -91,9 +91,14 @@ def run(cfg: Config, log=None, encoder=None) -> Dict[str, Any]:
     tokenizer = AutoTokenizer.from_pretrained(cfg.encoder)
     cache_dir = cfg.cache_dir or str(Path(cfg.data_dir) / "cache")
     t0 = time.time()
-    ids_all = encode_texts(tokenizer, train_df["comment_text"].tolist(), cfg.max_length, cache_dir, "train")
-    ids_test = encode_texts(tokenizer, test_df["comment_text"].tolist(), cfg.max_length, cache_dir, "test")
-    log(f"tokenized in {time.time() - t0:.0f}s")
+    trunc = cfg.truncation
+    ids_all = encode_texts(
+        tokenizer, train_df["comment_text"].tolist(), cfg.max_length, cache_dir, "train", truncation=trunc
+    )
+    ids_test = encode_texts(
+        tokenizer, test_df["comment_text"].tolist(), cfg.max_length, cache_dir, "test", truncation=trunc
+    )
+    log(f"tokenized in {time.time() - t0:.0f}s (max {cfg.max_length} tokens, truncation: {trunc})")
 
     pad_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0
     train_ds = TokenizedDataset([ids_all[i] for i in tr_idx], y_tr)
@@ -138,6 +143,8 @@ def run(cfg: Config, log=None, encoder=None) -> Dict[str, Any]:
         "loss": cfg.loss,
         "encoder": cfg.encoder,
         "freeze_encoder": cfg.freeze_encoder,
+        "max_length": cfg.max_length,
+        "truncation": cfg.truncation,
         "seed": cfg.seed,
         "split_seed": cfg.split_seed,
         "best_epoch": best_epoch,

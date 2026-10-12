@@ -23,6 +23,29 @@
     "aux_loss": 1.0189961183039262
    }
   ],
+  "moe_bce_noaux": [
+   {
+    "label_divergence": 0.1735803333333333,
+    "toxic_vs_clean": 0.41587,
+    "min_label_share_top2": 0.98169,
+    "clean_share_top2": 0.99433,
+    "aux_loss": 5.402765203234134
+   },
+   {
+    "label_divergence": 0.02372133333333332,
+    "toxic_vs_clean": 0.006955000000000006,
+    "min_label_share_top2": 0.98842,
+    "clean_share_top2": 0.9982,
+    "aux_loss": 5.846150006096206
+   },
+   {
+    "label_divergence": 0.16786999999999994,
+    "toxic_vs_clean": 0.41207499999999997,
+    "min_label_share_top2": 0.99149,
+    "clean_share_top2": 0.99542,
+    "aux_loss": 5.392853857733561
+   }
+  ],
   "moe_cbfocal": [
    {
     "label_divergence": 0.10853066666666668,
@@ -90,6 +113,15 @@
     "min_label_share_top2": 0.98209,
     "clean_share_top2": 0.27332,
     "aux_loss": 1.029994680202581
+   }
+  ],
+  "probe_moe": [
+   {
+    "label_divergence": 0.10162033333333334,
+    "toxic_vs_clean": 0.5620999999999999,
+    "min_label_share_top2": 0.8315899999999999,
+    "clean_share_top2": 0.28766,
+    "aux_loss": 1.043280225652212
    }
   ]
  },
@@ -206,52 +238,180 @@
     "top_spearman": 0.8774635499000359,
     "bottom_spearman": 0.47552350211646083
    }
+  },
+  "Linear vs MLP": {
+   "toxic": {
+    "top_overlap": 0.9517651888341545,
+    "top_spearman": 0.954966247239818,
+    "bottom_spearman": 0.9469389255712245
+   },
+   "severe_toxic": {
+    "top_overlap": 0.8782924613987285,
+    "top_spearman": 0.7931081134553913,
+    "bottom_spearman": 0.624343772158443
+   },
+   "obscene": {
+    "top_overlap": 0.9403278244378216,
+    "top_spearman": 0.9555103864631084,
+    "bottom_spearman": 0.9043191634936664
+   },
+   "threat": {
+    "top_overlap": 0.8748025276461296,
+    "top_spearman": 0.7742212851600919,
+    "bottom_spearman": 0.5673748163450344
+   },
+   "insult": {
+    "top_overlap": 0.9242291605874916,
+    "top_spearman": 0.9332070184188118,
+    "bottom_spearman": 0.8377201807506909
+   },
+   "identity_hate": {
+    "top_overlap": 0.8940777153558052,
+    "top_spearman": 0.8794650219178051,
+    "bottom_spearman": 0.6418277691864186
+   }
+  },
+  "Linear vs MoE, no balancing": {
+   "toxic": {
+    "top_overlap": 0.9512041598248495,
+    "top_spearman": 0.9541108170089915,
+    "bottom_spearman": 0.9475706456746972
+   },
+   "severe_toxic": {
+    "top_overlap": 0.882379654859219,
+    "top_spearman": 0.781072644630112,
+    "bottom_spearman": 0.5938020143635493
+   },
+   "obscene": {
+    "top_overlap": 0.9407793732502482,
+    "top_spearman": 0.95474105958011,
+    "bottom_spearman": 0.8964401029848036
+   },
+   "threat": {
+    "top_overlap": 0.876777251184834,
+    "top_spearman": 0.7795900319893034,
+    "bottom_spearman": 0.5968418677920551
+   },
+   "insult": {
+    "top_overlap": 0.9235726096683202,
+    "top_spearman": 0.932045364612537,
+    "bottom_spearman": 0.8606984855344155
+   },
+   "identity_hate": {
+    "top_overlap": 0.892439138576779,
+    "top_spearman": 0.8783246280346161,
+    "bottom_spearman": 0.6607955782701265
+   }
+  },
+  "Linear vs Multi-gate MoE": {
+   "toxic": {
+    "top_overlap": 0.9513957307060754,
+    "top_spearman": 0.9547791105826082,
+    "bottom_spearman": 0.9480416911631906
+   },
+   "severe_toxic": {
+    "top_overlap": 0.8769300635785648,
+    "top_spearman": 0.7926270347818832,
+    "bottom_spearman": 0.6439693118738529
+   },
+   "obscene": {
+    "top_overlap": 0.9402600921159578,
+    "top_spearman": 0.9537893285220426,
+    "bottom_spearman": 0.9044068152353573
+   },
+   "threat": {
+    "top_overlap": 0.8795418641390206,
+    "top_spearman": 0.7921311009485299,
+    "bottom_spearman": 0.5393611223423164
+   },
+   "insult": {
+    "top_overlap": 0.9262717634471356,
+    "top_spearman": 0.9341753124978283,
+    "bottom_spearman": 0.8474983074163186
+   },
+   "identity_hate": {
+    "top_overlap": 0.8947799625468166,
+    "top_spearman": 0.8826475795607598,
+    "bottom_spearman": 0.6226639756643962
+   }
+  },
+  "Linear vs Label attention": {
+   "toxic": {
+    "top_overlap": 0.9515325670498084,
+    "top_spearman": 0.9567475738787806,
+    "bottom_spearman": 0.9507013945203635
+   },
+   "severe_toxic": {
+    "top_overlap": 0.8764759309718437,
+    "top_spearman": 0.8191594950549232,
+    "bottom_spearman": 0.8405006380789105
+   },
+   "obscene": {
+    "top_overlap": 0.940621331165899,
+    "top_spearman": 0.9559925600877751,
+    "bottom_spearman": 0.9068140309575332
+   },
+   "threat": {
+    "top_overlap": 0.8759873617693524,
+    "top_spearman": 0.7955225420908003,
+    "bottom_spearman": 0.7901498216182553
+   },
+   "insult": {
+    "top_overlap": 0.92342670946406,
+    "top_spearman": 0.9316842188081624,
+    "bottom_spearman": 0.849824332540959
+   },
+   "identity_hate": {
+    "top_overlap": 0.8948970037453182,
+    "top_spearman": 0.8816265710585748,
+    "bottom_spearman": 0.8367717561470215
+   }
   }
  },
  "expert_offsets": {
   "moe": {
    "severe_toxic": [
-    0.17291764752764657,
-    0.2550587433074326,
-    0.20677057706957555
+    0.17291765168367249,
+    0.25505853801093126,
+    0.206770278148704
    ],
    "threat": [
-    0.2839747099392961,
-    0.3318238477614816,
-    0.26227262333155615
+    0.28397460919868156,
+    0.3318237961714264,
+    0.2622726923014094
    ],
    "identity_hate": [
-    0.2956683532897338,
-    0.3623456912578489,
+    0.2956685288386547,
+    0.36234562736239956,
     0.3534870928961695
    ]
   },
   "linear": {
    "severe_toxic": [
-    0.1292617555585053,
-    0.06674517186074462,
-    0.02610145087033393
+    0.1292615888340692,
+    0.06674517007388034,
+    0.02610125453370661
    ],
    "threat": [
-    0.11748336691049187,
-    0.016699072000209925,
-    0.015700020298533096
+    0.11748335760035468,
+    0.016699158910322833,
+    0.015699544968522824
    ],
    "identity_hate": [
-    0.15613317688471534,
-    0.049432693772113914,
-    0.044508227658147693
+    0.15613318981594795,
+    0.0494326867854397,
+    0.0445081581334828
    ]
   }
  },
  "thresholds": {
   "f1_lost_per_label": {
-   "toxic": 0.04153247366293323,
-   "severe_toxic": 0.028691964055472433,
-   "obscene": 0.013753046344390734,
-   "threat": 0.018308889829329305,
-   "insult": 0.006032245269349946,
-   "identity_hate": 0.011165602119219945
+   "toxic": 0.036733249618867946,
+   "severe_toxic": 0.03217406026502476,
+   "obscene": 0.014107839554372836,
+   "threat": 0.020671976194515922,
+   "insult": 0.005445162580947064,
+   "identity_hate": 0.010545611044299493
   },
   "paired": {
    "bert_cbfocal": {
@@ -320,6 +480,72 @@
      0.012376516327197828
     ]
    },
+   "labelattn_bce": {
+    "tuned_macro": [
+     0.0014005733170416867,
+     -0.013056948405156144,
+     0.019338350588964826
+    ],
+    "tuned_rare": [
+     0.00030123603036358304,
+     -0.0177357459501859,
+     0.027998682671920405
+    ],
+    "oracle_macro": [
+     0.0027720215229803946,
+     -0.000411103840352145,
+     0.004945094441513254
+    ],
+    "oracle_rare": [
+     0.0045760034038868636,
+     -0.0008707031104221441,
+     0.009263471297134673
+    ]
+   },
+   "mlp_bce": {
+    "tuned_macro": [
+     0.007656368497665378,
+     -0.005956148716132148,
+     0.00503369797401354
+    ],
+    "tuned_rare": [
+     0.007454086393489212,
+     -0.009746385524944334,
+     0.006619237107918341
+    ],
+    "oracle_macro": [
+     -0.0027960634530754813,
+     -0.0045595464624815785,
+     0.0010954504254011566
+    ],
+    "oracle_rare": [
+     -0.007078565612724352,
+     -0.009162583704423688,
+     0.001071939316389825
+    ]
+   },
+   "mmoe_bce": {
+    "tuned_macro": [
+     -0.0018092734892118933,
+     -0.004057702125982887,
+     0.015607304718957993
+    ],
+    "tuned_rare": [
+     -0.007852501273149626,
+     -0.006037270597978206,
+     0.029093259510112324
+    ],
+    "oracle_macro": [
+     0.00024836003719952426,
+     -0.003588777721436287,
+     0.004352129103165736
+    ],
+    "oracle_rare": [
+     -0.0027607968437052266,
+     -0.006737185137003832,
+     0.0074836008180982905
+    ]
+   },
    "moe_bce": {
     "tuned_macro": [
      0.009731527209455582,
@@ -340,6 +566,28 @@
      -0.005340327412966195,
      -0.01027078866826503,
      0.0014022631335880442
+    ]
+   },
+   "moe_bce_noaux": {
+    "tuned_macro": [
+     0.0059398459522289615,
+     -0.007478836179270032,
+     0.015596917403404298
+    ],
+    "tuned_rare": [
+     0.008512573951252711,
+     9.02074828578181e-05,
+     0.024819379782978546
+    ],
+    "oracle_macro": [
+     -0.0011939231835608188,
+     -0.0013390265620432107,
+     2.4412225510639374e-05
+    ],
+    "oracle_rare": [
+     -0.003775049880984538,
+     -0.002697607505539712,
+     0.0005356680426518157
     ]
    },
    "moe_cbfocal": {
@@ -411,16 +659,645 @@
   }
  },
  "val_test_gap": {
-  "runs": 24,
-  "mean_gap": 0.006076212287843652,
-  "std_over_runs": 0.00029868476829441573,
+  "runs": 36,
+  "mean_gap": 0.00607222895388885,
+  "std_over_runs": 0.0002752712993058008,
   "per_label": {
    "toxic": 0.0137,
-   "severe_toxic": 0.0024,
+   "severe_toxic": 0.0025,
    "obscene": 0.0112,
-   "threat": -0.0,
+   "threat": 0.0,
    "insult": 0.0091,
-   "identity_hate": 0.0001
+   "identity_hate": -0.0
   }
+ },
+ "labels": {
+  "severe_toxic": {
+   "positives": 1595,
+   "p_toxic_given_label": 1.0
+  },
+  "obscene": {
+   "positives": 8449,
+   "p_toxic_given_label": 0.938099183335306
+  },
+  "threat": {
+   "positives": 478,
+   "p_toxic_given_label": 0.9393305439330544
+  },
+  "insult": {
+   "positives": 7877,
+   "p_toxic_given_label": 0.9323346451694807
+  },
+  "identity_hate": {
+   "positives": 1405,
+   "p_toxic_given_label": 0.9266903914590747
+  }
+ },
+ "ensembles": {
+  "seed_ensembles": {
+   "bert_bce": {
+    "n": 3,
+    "single_roc": 0.9854814524098313,
+    "ensemble_roc": 0.9859286290933387,
+    "single_pr": 0.6873764232382773,
+    "ensemble_pr": 0.695553263997033
+   },
+   "bert_cbfocal": {
+    "n": 3,
+    "single_roc": 0.9855972181938659,
+    "ensemble_roc": 0.9860526498969296,
+    "single_pr": 0.6754200000880474,
+    "ensemble_pr": 0.6875542770458677
+   },
+   "bert_focal": {
+    "n": 3,
+    "single_roc": 0.9857599095821862,
+    "ensemble_roc": 0.986180679177764,
+    "single_pr": 0.6829161943132217,
+    "ensemble_pr": 0.6923629872979102
+   },
+   "bert_wbce": {
+    "n": 3,
+    "single_roc": 0.9850258288768626,
+    "ensemble_roc": 0.9858718433486416,
+    "single_pr": 0.6553988619861134,
+    "ensemble_pr": 0.678978543468737
+   },
+   "labelattn_bce": {
+    "n": 3,
+    "single_roc": 0.9853809969803927,
+    "ensemble_roc": 0.9858284771137503,
+    "single_pr": 0.6886229123667303,
+    "ensemble_pr": 0.6970957189206944
+   },
+   "mlp_bce": {
+    "n": 3,
+    "single_roc": 0.9856239294409274,
+    "ensemble_roc": 0.9860438774042349,
+    "single_pr": 0.6789358900168462,
+    "ensemble_pr": 0.6881274573510737
+   },
+   "mmoe_bce": {
+    "n": 3,
+    "single_roc": 0.9856785332764811,
+    "ensemble_roc": 0.98611729434162,
+    "single_pr": 0.6840457387536564,
+    "ensemble_pr": 0.6921023375469301
+   },
+   "moe_bce": {
+    "n": 3,
+    "single_roc": 0.985527028921343,
+    "ensemble_roc": 0.9860188876060246,
+    "single_pr": 0.6792780294788917,
+    "ensemble_pr": 0.687847136544101
+   },
+   "moe_bce_noaux": {
+    "n": 3,
+    "single_roc": 0.9855188909398646,
+    "ensemble_roc": 0.9860033364661712,
+    "single_pr": 0.6803603152586805,
+    "ensemble_pr": 0.6876089640940032
+   },
+   "moe_cbfocal": {
+    "n": 3,
+    "single_roc": 0.9854995503468768,
+    "ensemble_roc": 0.9860549895241973,
+    "single_pr": 0.6770806872407386,
+    "ensemble_pr": 0.6869167149689909
+   },
+   "moe_focal": {
+    "n": 3,
+    "single_roc": 0.9856542789020198,
+    "ensemble_roc": 0.9861262128249279,
+    "single_pr": 0.6784297049561084,
+    "ensemble_pr": 0.6875765123363479
+   },
+   "moe_wbce": {
+    "n": 3,
+    "single_roc": 0.9852705786283811,
+    "ensemble_roc": 0.9859927120707089,
+    "single_pr": 0.6533967658225611,
+    "ensemble_pr": 0.6729600021633099
+   }
+  },
+  "pairs": {
+   "bert_bce": {
+    "roc": 0.9858145606368129,
+    "pr": 0.6936810609474388,
+    "n_pairs": 3
+   },
+   "moe_bce": {
+    "roc": 0.9858987969550972,
+    "pr": 0.6901203362276561,
+    "n_pairs": 6
+   },
+   "mlp_bce": {
+    "roc": 0.9858962738057699,
+    "pr": 0.6900078700864397,
+    "n_pairs": 6
+   },
+   "moe_bce_noaux": {
+    "roc": 0.9858571835160966,
+    "pr": 0.6902114999942436,
+    "n_pairs": 6
+   },
+   "mmoe_bce": {
+    "roc": 0.9859229791306238,
+    "pr": 0.6928903040188202,
+    "n_pairs": 6
+   },
+   "labelattn_bce": {
+    "roc": 0.985819274166115,
+    "pr": 0.6944739632315559,
+    "n_pairs": 6
+   }
+  }
+ },
+ "subtypes": {
+  "bert_bce": {
+   "severe_toxic": 0.9086683225882527,
+   "obscene": 0.8773960773323018,
+   "threat": 0.9804308874014823,
+   "insult": 0.853115433352178,
+   "identity_hate": 0.9522826044041534
+  },
+  "moe_bce": {
+   "severe_toxic": 0.9069439994108893,
+   "obscene": 0.8766008981251329,
+   "threat": 0.9793599546870575,
+   "insult": 0.8515749880006308,
+   "identity_hate": 0.9542512572899825
+  },
+  "moe_cbfocal": {
+   "severe_toxic": 0.9038356946165725,
+   "obscene": 0.8749488124488124,
+   "threat": 0.9807703200226564,
+   "insult": 0.8507353406615872,
+   "identity_hate": 0.9573120317052132
+  },
+  "mlp_bce": {
+   "severe_toxic": 0.9075910372014194,
+   "obscene": 0.8770732450579389,
+   "threat": 0.978481049381437,
+   "insult": 0.852574626930679,
+   "identity_hate": 0.9537938300213638
+  },
+  "moe_bce_noaux": {
+   "severe_toxic": 0.9073327458096884,
+   "obscene": 0.8770542362697974,
+   "threat": 0.9793016557183414,
+   "insult": 0.849853626568012,
+   "identity_hate": 0.952585535779903
+  },
+  "mmoe_bce": {
+   "severe_toxic": 0.9060937406513195,
+   "obscene": 0.8767901838692654,
+   "threat": 0.9802442478120618,
+   "insult": 0.8534744888907473,
+   "identity_hate": 0.9563701726940564
+  },
+  "labelattn_bce": {
+   "severe_toxic": 0.9054208340455192,
+   "obscene": 0.8765166737105513,
+   "threat": 0.9788378888036968,
+   "insult": 0.8525686562826026,
+   "identity_hate": 0.9555415007518028
+  }
+ },
+ "length": {
+  "share_long": 0.1912063521835631,
+  "unit": "bert-base-uncased tokens",
+  "auc": {
+   "bert_bce": {
+    "toxic": {
+     "short": 0.9742991765692179,
+     "long": 0.957027152845543
+    },
+    "severe_toxic": {
+     "short": 0.9904597849890916,
+     "long": 0.9922054465513568
+    },
+    "obscene": {
+     "short": 0.9819477322651902,
+     "long": 0.9654583571348815
+    },
+    "threat": {
+     "short": 0.9959199987419538,
+     "long": 0.9974037595074705
+    },
+    "insult": {
+     "short": 0.9812158061116607,
+     "long": 0.9683877860195229
+    },
+    "identity_hate": {
+     "short": 0.9920628265393971,
+     "long": 0.9881817184843998
+    }
+   },
+   "moe_bce": {
+    "toxic": {
+     "short": 0.9742076411488767,
+     "long": 0.9555787325091091
+    },
+    "severe_toxic": {
+     "short": 0.9901567028187849,
+     "long": 0.9925448875631913
+    },
+    "obscene": {
+     "short": 0.9818142734886407,
+     "long": 0.9616420182418302
+    },
+    "threat": {
+     "short": 0.9963217348457846,
+     "long": 0.9981567952813959
+    },
+    "insult": {
+     "short": 0.9813885876931506,
+     "long": 0.9687325815718391
+    },
+    "identity_hate": {
+     "short": 0.9922414736841328,
+     "long": 0.9894845643472062
+    }
+   },
+   "mlp_bce": {
+    "toxic": {
+     "short": 0.9741509621170107,
+     "long": 0.957518912095684
+    },
+    "severe_toxic": {
+     "short": 0.9902979597129824,
+     "long": 0.9924494954386102
+    },
+    "obscene": {
+     "short": 0.9818220851427477,
+     "long": 0.965171255173634
+    },
+    "threat": {
+     "short": 0.996263759880905,
+     "long": 0.9977944558922687
+    },
+    "insult": {
+     "short": 0.981444836381526,
+     "long": 0.9679234434773496
+    },
+    "identity_hate": {
+     "short": 0.9920985191085484,
+     "long": 0.9894971760706256
+    }
+   },
+   "moe_bce_noaux": {
+    "toxic": {
+     "short": 0.974029539037437,
+     "long": 0.9565489118271099
+    },
+    "severe_toxic": {
+     "short": 0.9902154450150303,
+     "long": 0.9928886865908695
+    },
+    "obscene": {
+     "short": 0.9819635115617986,
+     "long": 0.9632296421919325
+    },
+    "threat": {
+     "short": 0.9961373262323611,
+     "long": 0.9979267885387326
+    },
+    "insult": {
+     "short": 0.9812958721952361,
+     "long": 0.9685962116556379
+    },
+    "identity_hate": {
+     "short": 0.9921078415652929,
+     "long": 0.9896024565443878
+    }
+   },
+   "mmoe_bce": {
+    "toxic": {
+     "short": 0.9740052899400219,
+     "long": 0.9570887458482914
+    },
+    "severe_toxic": {
+     "short": 0.9901546356447234,
+     "long": 0.9921696139766412
+    },
+    "obscene": {
+     "short": 0.9818281258697883,
+     "long": 0.963958522464616
+    },
+    "threat": {
+     "short": 0.9964894743463402,
+     "long": 0.9978952807657648
+    },
+    "insult": {
+     "short": 0.9815327347679303,
+     "long": 0.9686983402173343
+    },
+    "identity_hate": {
+     "short": 0.9926268121350803,
+     "long": 0.9893907989252618
+    }
+   },
+   "labelattn_bce": {
+    "toxic": {
+     "short": 0.9741006686936662,
+     "long": 0.9566647568061164
+    },
+    "severe_toxic": {
+     "short": 0.9902331538061567,
+     "long": 0.9898250014526719
+    },
+    "obscene": {
+     "short": 0.9818837770234601,
+     "long": 0.9641999092709255
+    },
+    "threat": {
+     "short": 0.9966710523556916,
+     "long": 0.9977566465647075
+    },
+    "insult": {
+     "short": 0.9813080735822318,
+     "long": 0.9668373970377357
+    },
+    "identity_hate": {
+     "short": 0.9923462169378381,
+     "long": 0.9896337116850359
+    }
+   }
+  }
+ },
+ "routing_recall": {
+  "moe_bce_s42": {
+   "toxic": {
+    "share_routed_away": 0.009852216748768473,
+    "recall_routed_to_toxic_experts": 0.8888888888888888,
+    "recall_routed_away": 0.0
+   },
+   "severe_toxic": {
+    "share_routed_away": 0.0,
+    "recall_routed_to_toxic_experts": 0.7602179836512262,
+    "recall_routed_away": NaN
+   },
+   "obscene": {
+    "share_routed_away": 0.007315090761311298,
+    "recall_routed_to_toxic_experts": 0.7663755458515283,
+    "recall_routed_away": 0.0
+   },
+   "threat": {
+    "share_routed_away": 0.0,
+    "recall_routed_to_toxic_experts": 0.6682464454976303,
+    "recall_routed_away": NaN
+   },
+   "insult": {
+    "share_routed_away": 0.0046688065363291505,
+    "recall_routed_to_toxic_experts": 0.772207563764292,
+    "recall_routed_away": 0.0
+   },
+   "identity_hate": {
+    "share_routed_away": 0.0,
+    "recall_routed_to_toxic_experts": 0.75,
+    "recall_routed_away": NaN
+   }
+  },
+  "moe_bce_s43": {
+   "toxic": {
+    "share_routed_away": 0.006896551724137931,
+    "recall_routed_to_toxic_experts": 0.9267526455026455,
+    "recall_routed_away": 0.0
+   },
+   "severe_toxic": {
+    "share_routed_away": 0.0,
+    "recall_routed_to_toxic_experts": 0.6539509536784741,
+    "recall_routed_away": NaN
+   },
+   "obscene": {
+    "share_routed_away": 0.004605797886751558,
+    "recall_routed_to_toxic_experts": 0.7781709308655417,
+    "recall_routed_away": 0.0
+   },
+   "threat": {
+    "share_routed_away": 0.0,
+    "recall_routed_to_toxic_experts": 0.7819905213270142,
+    "recall_routed_away": NaN
+   },
+   "insult": {
+    "share_routed_away": 0.004377006127808579,
+    "recall_routed_to_toxic_experts": 0.7593786635404455,
+    "recall_routed_away": 0.0
+   },
+   "identity_hate": {
+    "share_routed_away": 0.0,
+    "recall_routed_to_toxic_experts": 0.7794943820224719,
+    "recall_routed_away": NaN
+   }
+  },
+  "moe_bce_s44": {
+   "toxic": {
+    "share_routed_away": 0.009195402298850575,
+    "recall_routed_to_toxic_experts": 0.8987404706662248,
+    "recall_routed_away": 0.0
+   },
+   "severe_toxic": {
+    "share_routed_away": 0.0,
+    "recall_routed_to_toxic_experts": 0.7275204359673024,
+    "recall_routed_away": NaN
+   },
+   "obscene": {
+    "share_routed_away": 0.004876727174207532,
+    "recall_routed_to_toxic_experts": 0.7702150830383883,
+    "recall_routed_away": 0.0
+   },
+   "threat": {
+    "share_routed_away": 0.0,
+    "recall_routed_to_toxic_experts": 0.5402843601895735,
+    "recall_routed_away": NaN
+   },
+   "insult": {
+    "share_routed_away": 0.004085205719288007,
+    "recall_routed_to_toxic_experts": 0.7951948432464108,
+    "recall_routed_away": 0.0
+   },
+   "identity_hate": {
+    "share_routed_away": 0.0014044943820224719,
+    "recall_routed_to_toxic_experts": 0.7890295358649789,
+    "recall_routed_away": 0.0
+   }
+  },
+  "moe_cbfocal_s42": {
+   "toxic": {
+    "share_routed_away": 0.021182266009852218,
+    "recall_routed_to_toxic_experts": 0.9018621036738802,
+    "recall_routed_away": 0.20930232558139536
+   },
+   "severe_toxic": {
+    "share_routed_away": 0.0,
+    "recall_routed_to_toxic_experts": 0.7901907356948229,
+    "recall_routed_away": NaN
+   },
+   "obscene": {
+    "share_routed_away": 0.009211595773503115,
+    "recall_routed_to_toxic_experts": 0.7626469783975937,
+    "recall_routed_away": 0.0
+   },
+   "threat": {
+    "share_routed_away": 0.0,
+    "recall_routed_to_toxic_experts": 0.6824644549763034,
+    "recall_routed_away": NaN
+   },
+   "insult": {
+    "share_routed_away": 0.011963816749343449,
+    "recall_routed_to_toxic_experts": 0.784111045481394,
+    "recall_routed_away": 0.0975609756097561
+   },
+   "identity_hate": {
+    "share_routed_away": 0.0014044943820224719,
+    "recall_routed_to_toxic_experts": 0.7187060478199718,
+    "recall_routed_away": 0.0
+   }
+  },
+  "moe_cbfocal_s43": {
+   "toxic": {
+    "share_routed_away": 0.026600985221674877,
+    "recall_routed_to_toxic_experts": 0.9451754385964912,
+    "recall_routed_away": 0.24074074074074073
+   },
+   "severe_toxic": {
+    "share_routed_away": 0.0,
+    "recall_routed_to_toxic_experts": 0.7929155313351499,
+    "recall_routed_away": NaN
+   },
+   "obscene": {
+    "share_routed_away": 0.01625575724735844,
+    "recall_routed_to_toxic_experts": 0.8394381713026714,
+    "recall_routed_away": 0.03333333333333333
+   },
+   "threat": {
+    "share_routed_away": 0.0,
+    "recall_routed_to_toxic_experts": 0.6777251184834123,
+    "recall_routed_away": NaN
+   },
+   "insult": {
+    "share_routed_away": 0.013131018383425737,
+    "recall_routed_to_toxic_experts": 0.7791247782377292,
+    "recall_routed_away": 0.044444444444444446
+   },
+   "identity_hate": {
+    "share_routed_away": 0.004213483146067416,
+    "recall_routed_to_toxic_experts": 0.7968970380818053,
+    "recall_routed_away": 0.0
+   }
+  },
+  "moe_cbfocal_s44": {
+   "toxic": {
+    "share_routed_away": 0.03185550082101806,
+    "recall_routed_to_toxic_experts": 0.9048507462686567,
+    "recall_routed_away": 0.1958762886597938
+   },
+   "severe_toxic": {
+    "share_routed_away": 0.0,
+    "recall_routed_to_toxic_experts": 0.7029972752043597,
+    "recall_routed_away": NaN
+   },
+   "obscene": {
+    "share_routed_away": 0.015172040097534544,
+    "recall_routed_to_toxic_experts": 0.7843191196698762,
+    "recall_routed_away": 0.0
+   },
+   "threat": {
+    "share_routed_away": 0.009478672985781991,
+    "recall_routed_to_toxic_experts": 0.6889952153110048,
+    "recall_routed_away": 0.0
+   },
+   "insult": {
+    "share_routed_away": 0.017508024511234316,
+    "recall_routed_to_toxic_experts": 0.7656667656667656,
+    "recall_routed_away": 0.0
+   },
+   "identity_hate": {
+    "share_routed_away": 0.0028089887640449437,
+    "recall_routed_to_toxic_experts": 0.7,
+    "recall_routed_away": 0.0
+   }
+  }
+ },
+ "bootstrap": {
+  "toxic": {
+   "d_roc": -0.00015455925989471542,
+   "d_roc_ci": [
+    -0.0003475315932937789,
+    1.1468157761862502e-05
+   ],
+   "d_pr": -0.0017636686737773077,
+   "d_pr_ci": [
+    -0.004172922793307945,
+    0.0001035833112293254
+   ]
+  },
+  "severe_toxic": {
+   "d_roc": 2.7243244521413246e-05,
+   "d_roc_ci": [
+    -0.00042396445308068574,
+    0.0006504737883783449
+   ],
+   "d_pr": -0.021941903104420235,
+   "d_pr_ci": [
+    -0.034416058312973806,
+    -0.010593299266728421
+   ]
+  },
+  "obscene": {
+   "d_roc": -0.00032303262911770325,
+   "d_roc_ci": [
+    -0.0005719790484627341,
+    -0.00011319742593085823
+   ],
+   "d_pr": -0.0015620104377442878,
+   "d_pr_ci": [
+    -0.0028794746020174675,
+    6.876024095076323e-06
+   ]
+  },
+  "threat": {
+   "d_roc": 0.0003663366564754522,
+   "d_roc_ci": [
+    -0.0009778871866584437,
+    0.0015368171972344642
+   ],
+   "d_pr": -0.026299898251954,
+   "d_pr_ci": [
+    -0.047339047556811724,
+    -0.0036881990339658493
+   ]
+  },
+  "insult": {
+   "d_roc": 0.0002558693116612165,
+   "d_roc_ci": [
+    -3.157166582156423e-05,
+    0.000621177963549735
+   ],
+   "d_pr": 2.621265108992965e-05,
+   "d_pr_ci": [
+    -0.0017121503073913606,
+    0.0019396190955038339
+   ]
+  },
+  "identity_hate": {
+   "d_roc": 0.00036969375247086766,
+   "d_roc_ci": [
+    -2.2041529274641202e-05,
+    0.0007431714262899847
+   ],
+   "d_pr": 0.005304503099214042,
+   "d_pr_ci": [
+    -0.0015083333829482262,
+    0.01166737759491036
+   ]
+  }
+ },
+ "disagreements": {
+  "runs": 36,
+  "confident_false_positives": 730,
+  "confident_false_negatives": 34,
+  "toxic_positives": 6090
  }
 }

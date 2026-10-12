@@ -31,6 +31,29 @@ Trained on 143,613 comments (100% of `train.csv` minus a 15,958-comment validati
 
 ¹ Mean test F1 over the three rarest labels: `severe_toxic`, `threat`, `identity_hate`.
 
+**Follow-up: heads built around the MoE head's failure** (BERT-base, plain BCE, each minus the linear-head baseline on the same seed; mean ± std over 3 seeds). Why these heads: `docs/diagnosis.md`.
+
+| Head | Head params | Δ ROC-AUC | Δ PR-AUC | Δ Macro-F1 (val-tuned thr.) | Δ Rare-label F1 |
+|---|---|---:|---:|---:|---:|
+| MoE head, BCE | 1.20M | +0.0000 ± 0.0001 | -0.008 ± 0.001 | +0.002 ± 0.013 | +0.001 ± 0.014 |
+| MLP head, same size as the MoE head | 1.19M | +0.0001 ± 0.0002 | -0.008 ± 0.003 | +0.002 ± 0.007 | +0.001 ± 0.010 |
+| MoE head, no load balancing | 1.20M | +0.0000 ± 0.0001 | -0.007 ± 0.005 | +0.005 ± 0.012 | +0.011 ± 0.013 |
+| Multi-gate MoE head (one gate per label) | 1.21M | +0.0002 ± 0.0001 | -0.003 ± 0.002 | +0.003 ± 0.011 | +0.005 ± 0.021 |
+| Label-wise attention head | 0.20M | -0.0001 ± 0.0002 | +0.001 ± 0.001 | +0.003 ± 0.016 | +0.004 ± 0.023 |
+
+**Do the labels use different experts?** Mean distance between the expert mixtures of the six labels' positive comments (total variation; 0 = the same experts, 1 = disjoint experts): MoE router 0.13, multi-gate MoE 0.47. For one and the same comment, the multi-gate head's six label gates differ by 0.87 on average; a per-comment router scores 0 by construction.
+
+**Frozen encoder vs fine-tuned encoder.** The same heads trained on fixed BERT-base features (`configs/probes.yaml`). A head that helps only when the encoder cannot adapt is doing work that fine-tuning already does.
+
+| Head | Frozen: test ROC-AUC | Frozen: test PR-AUC | Frozen: Δ ROC-AUC vs linear | Fine-tuned: Δ ROC-AUC vs linear |
+|---|---:|---:|---:|---:|
+| Linear head | 0.9545 | 0.492 | baseline | baseline |
+| Linear head, mean pooling | 0.9612 | 0.525 | +0.0067 | – |
+| MLP head | 0.9614 | 0.510 | +0.0069 | +0.0001 ± 0.0002 |
+| MoE head | 0.9591 | 0.506 | +0.0046 | +0.0000 ± 0.0001 |
+| Multi-gate MoE head | 0.9600 | 0.518 | +0.0055 | +0.0002 ± 0.0001 |
+| Label-wise attention head | 0.9803 | 0.638 | +0.0258 | -0.0001 ± 0.0002 |
+
 **Per label (mean over seeds)**
 
 | Label | Test positives | bert_bce PR-AUC | moe_cbfocal PR-AUC | bert_bce F1 | moe_cbfocal F1 |
@@ -45,6 +68,21 @@ Trained on 143,613 comments (100% of `train.csv` minus a 15,958-comment validati
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../docs/figures/ablation_dark.png">
   <img alt="Each setting minus the BERT + BCE baseline, paired by seed" src="../docs/figures/ablation_light.png">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../docs/figures/heads_dark.png">
+  <img alt="Follow-up heads minus the BERT + BCE baseline, paired by seed" src="../docs/figures/heads_light.png">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../docs/figures/probes_dark.png">
+  <img alt="Head gains with a frozen vs a fine-tuned encoder" src="../docs/figures/probes_light.png">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../docs/figures/mmoe_gates_dark.png">
+  <img alt="Which experts each label's gate uses in the multi-gate MoE head" src="../docs/figures/mmoe_gates_light.png">
 </picture>
 
 <picture>
@@ -74,5 +112,15 @@ Trained on 143,613 comments (100% of `train.csv` minus a 15,958-comment validati
 | `moe_wbce` | 42, 43, 44 | 2, 2, 2 | 8.2 | bf16 | NVIDIA A100-SXM4-80GB |
 | `moe_focal` | 42, 43, 44 | 2, 2, 2 | 8.2 | bf16 | NVIDIA A100-SXM4-80GB |
 | `moe_cbfocal` | 42, 43, 44 | 2, 2, 2 | 8.2 | bf16 | NVIDIA A100-SXM4-80GB |
+| `mlp_bce` | 42, 43, 44 | 2, 2, 2 | 7.1 | bf16 | NVIDIA A100-SXM4-80GB |
+| `moe_bce_noaux` | 42, 43, 44 | 2, 2, 2 | 7.8 | bf16 | NVIDIA A100-SXM4-80GB |
+| `mmoe_bce` | 42, 43, 44 | 2, 2, 2 | 7.5 | bf16 | NVIDIA A100-SXM4-80GB |
+| `labelattn_bce` | 42, 43, 44 | 2, 2, 2 | 7.2 | bf16 | NVIDIA A100-SXM4-80GB |
+| `probe_linear` | 42 | 3 | 4.1 | bf16 | NVIDIA A100-SXM4-80GB |
+| `probe_linear_mean` | 42 | 3 | 4.1 | bf16 | NVIDIA A100-SXM4-80GB |
+| `probe_mlp` | 42 | 3 | 4.2 | bf16 | NVIDIA A100-SXM4-80GB |
+| `probe_moe` | 42 | 3 | 5.3 | bf16 | NVIDIA A100-SXM4-80GB |
+| `probe_mmoe` | 42 | 3 | 4.8 | bf16 | NVIDIA A100-SXM4-80GB |
+| `probe_labelattn` | 42 | 3 | 4.2 | bf16 | NVIDIA A100-SXM4-80GB |
 
 </details>

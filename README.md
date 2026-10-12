@@ -12,8 +12,11 @@ and a Mixture-of-Experts (MoE) head looked promising. This repository rebuilds t
 properly and tests both ideas in a controlled study: **2 classification heads × 4 losses × 3 seeds
 = 24 BERT-base runs** on the full training set (160k comments), scored on Kaggle's official
 labelled test set (64k comments), with decision thresholds tuned on a validation split only.
+A follow-up of **18 more runs** then works out why the MoE head failed and tests two heads built
+to get around it.
 
-**Result: neither the MoE head nor the imbalance-aware losses beat plain BERT + BCE.**
+**Result: no head and no loss beats plain BERT + BCE, including the two heads built to fix the
+MoE's problem.**
 
 * **All 8 settings tie on ranking quality.** Test ROC-AUC spans 0.9850–0.9858 (baseline
   0.9855 ± 0.0001). Plain BCE has the best PR-AUC; every alternative is 0.005–0.024 lower. On
@@ -26,12 +29,18 @@ labelled test set (64k comments), with decision thresholds tuned on a validation
   rarest labels), does not survive the full data and tuned thresholds.
 * **The MoE router learns toxic vs. clean, not kinds of toxicity.** In all 12 MoE runs, comments
   with any toxic label send on average 90% of their routing weight to the same two of six experts,
-  whatever the label; clean comments spread across all six.
-* **Why it ties: where the metrics are decided, the MoE head computes the same ranking as the
-  linear head.** Among each label's top-scored test comments it agrees with the linear head as
-  closely as a second linear-head seed does. [`docs/diagnosis.md`](docs/diagnosis.md) works this
-  out from the saved predictions and sets up two heads built around the problem (a multi-gate MoE
-  with one gate per label, and label-wise attention), implemented but not yet trained.
+  whatever the label. It cannot do better: 93–100% of comments with a rare label are also `toxic`,
+  so one routing decision per comment cannot tell the labels apart.
+* **Fixing the routing does not fix the scores.** A multi-gate MoE (one gate per label) does learn
+  label-specific experts, and label-wise attention gives every label its own view of the words.
+  Both tie with the linear head (ROC-AUC +0.0002 and −0.0001, paired over 3 seeds).
+* **Once BERT is fine-tuned, the head hardly matters.** On a frozen encoder, label-wise attention
+  beats a linear head by 0.026 ROC-AUC. Fine-tuned, all five heads are within 0.0002 of the
+  linear head. The MoE head's small loss on rare-label PR-AUC (−0.014) is matched by an MLP of the same
+  size (−0.017), so it comes from the extra layer, not the routing.
+* **Where the headroom is.** Averaging 3 seeds adds more PR-AUC (+0.008) than any head. The
+  remaining errors sit in long comments (19% are cut at 128 tokens) and in what looks like label
+  noise. [`docs/diagnosis.md`](docs/diagnosis.md) has the full analysis.
 
 [`docs/course_project.md`](docs/course_project.md) describes the original project and the bugs
 this version fixes.
@@ -70,6 +79,29 @@ Trained on 143,613 comments (100% of `train.csv` minus a 15,958-comment validati
 
 ¹ Mean test F1 over the three rarest labels: `severe_toxic`, `threat`, `identity_hate`.
 
+**Follow-up: heads built around the MoE head's failure** (BERT-base, plain BCE, each minus the linear-head baseline on the same seed; mean ± std over 3 seeds). Why these heads: `docs/diagnosis.md`.
+
+| Head | Head params | Δ ROC-AUC | Δ PR-AUC | Δ Macro-F1 (val-tuned thr.) | Δ Rare-label F1 |
+|---|---|---:|---:|---:|---:|
+| MoE head, BCE | 1.20M | +0.0000 ± 0.0001 | -0.008 ± 0.001 | +0.002 ± 0.013 | +0.001 ± 0.014 |
+| MLP head, same size as the MoE head | 1.19M | +0.0001 ± 0.0002 | -0.008 ± 0.003 | +0.002 ± 0.007 | +0.001 ± 0.010 |
+| MoE head, no load balancing | 1.20M | +0.0000 ± 0.0001 | -0.007 ± 0.005 | +0.005 ± 0.012 | +0.011 ± 0.013 |
+| Multi-gate MoE head (one gate per label) | 1.21M | +0.0002 ± 0.0001 | -0.003 ± 0.002 | +0.003 ± 0.011 | +0.005 ± 0.021 |
+| Label-wise attention head | 0.20M | -0.0001 ± 0.0002 | +0.001 ± 0.001 | +0.003 ± 0.016 | +0.004 ± 0.023 |
+
+**Do the labels use different experts?** Mean distance between the expert mixtures of the six labels' positive comments (total variation; 0 = the same experts, 1 = disjoint experts): MoE router 0.13, multi-gate MoE 0.47. For one and the same comment, the multi-gate head's six label gates differ by 0.87 on average; a per-comment router scores 0 by construction.
+
+**Frozen encoder vs fine-tuned encoder.** The same heads trained on fixed BERT-base features (`configs/probes.yaml`). A head that helps only when the encoder cannot adapt is doing work that fine-tuning already does.
+
+| Head | Frozen: test ROC-AUC | Frozen: test PR-AUC | Frozen: Δ ROC-AUC vs linear | Fine-tuned: Δ ROC-AUC vs linear |
+|---|---:|---:|---:|---:|
+| Linear head | 0.9545 | 0.492 | baseline | baseline |
+| Linear head, mean pooling | 0.9612 | 0.525 | +0.0067 | – |
+| MLP head | 0.9614 | 0.510 | +0.0069 | +0.0001 ± 0.0002 |
+| MoE head | 0.9591 | 0.506 | +0.0046 | +0.0000 ± 0.0001 |
+| Multi-gate MoE head | 0.9600 | 0.518 | +0.0055 | +0.0002 ± 0.0001 |
+| Label-wise attention head | 0.9803 | 0.638 | +0.0258 | -0.0001 ± 0.0002 |
+
 **Per label (mean over seeds)**
 
 | Label | Test positives | bert_bce PR-AUC | moe_cbfocal PR-AUC | bert_bce F1 | moe_cbfocal F1 |
@@ -84,6 +116,21 @@ Trained on 143,613 comments (100% of `train.csv` minus a 15,958-comment validati
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/figures/ablation_dark.png">
   <img alt="Each setting minus the BERT + BCE baseline, paired by seed" src="docs/figures/ablation_light.png">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/figures/heads_dark.png">
+  <img alt="Follow-up heads minus the BERT + BCE baseline, paired by seed" src="docs/figures/heads_light.png">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/figures/probes_dark.png">
+  <img alt="Head gains with a frozen vs a fine-tuned encoder" src="docs/figures/probes_light.png">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/figures/mmoe_gates_dark.png">
+  <img alt="Which experts each label's gate uses in the multi-gate MoE head" src="docs/figures/mmoe_gates_light.png">
 </picture>
 
 <picture>
@@ -113,6 +160,16 @@ Trained on 143,613 comments (100% of `train.csv` minus a 15,958-comment validati
 | `moe_wbce` | 42, 43, 44 | 2, 2, 2 | 8.2 | bf16 | NVIDIA A100-SXM4-80GB |
 | `moe_focal` | 42, 43, 44 | 2, 2, 2 | 8.2 | bf16 | NVIDIA A100-SXM4-80GB |
 | `moe_cbfocal` | 42, 43, 44 | 2, 2, 2 | 8.2 | bf16 | NVIDIA A100-SXM4-80GB |
+| `mlp_bce` | 42, 43, 44 | 2, 2, 2 | 7.1 | bf16 | NVIDIA A100-SXM4-80GB |
+| `moe_bce_noaux` | 42, 43, 44 | 2, 2, 2 | 7.8 | bf16 | NVIDIA A100-SXM4-80GB |
+| `mmoe_bce` | 42, 43, 44 | 2, 2, 2 | 7.5 | bf16 | NVIDIA A100-SXM4-80GB |
+| `labelattn_bce` | 42, 43, 44 | 2, 2, 2 | 7.2 | bf16 | NVIDIA A100-SXM4-80GB |
+| `probe_linear` | 42 | 3 | 4.1 | bf16 | NVIDIA A100-SXM4-80GB |
+| `probe_linear_mean` | 42 | 3 | 4.1 | bf16 | NVIDIA A100-SXM4-80GB |
+| `probe_mlp` | 42 | 3 | 4.2 | bf16 | NVIDIA A100-SXM4-80GB |
+| `probe_moe` | 42 | 3 | 5.3 | bf16 | NVIDIA A100-SXM4-80GB |
+| `probe_mmoe` | 42 | 3 | 4.8 | bf16 | NVIDIA A100-SXM4-80GB |
+| `probe_labelattn` | 42 | 3 | 4.2 | bf16 | NVIDIA A100-SXM4-80GB |
 
 </details>
 <!-- RESULTS:END -->
@@ -120,46 +177,50 @@ Trained on 143,613 comments (100% of `train.csv` minus a 15,958-comment validati
 ## Why it didn't help
 
 The full analysis is in [`docs/diagnosis.md`](docs/diagnosis.md); every number there comes from
-[`scripts/diagnose.py`](scripts/diagnose.py), run on the saved test predictions.
+[`scripts/diagnose.py`](scripts/diagnose.py) (saved test predictions and labels) or the report above.
 
 * **Tuned thresholds absorb what reweighting does.** Up-weighting positives shifts every score
   upwards, which mainly changes where the 0.5 cut falls. Once each label gets its own threshold
   from validation data, there is little left for the loss to fix, and ranking quality (PR-AUC)
   gets slightly worse, most of all with inverse-frequency weights.
-* **The router split comments, not labels, and nothing is misrouted.** The rare labels mostly
-  co-occur with `toxic`, so one routing decision per comment can only separate toxic from clean.
-  The router does that well: none of the ~6,000 comments per seed that the linear head scores ≥ 0.9
-  for `toxic` is sent away from the two "toxic" experts. But the linear head already makes that split.
-* **Same function where it counts.** At the top of each label's ranking (twice as many comments as
-  the label has positives), the MoE and linear heads overlap as much as two linear-head seeds do
-  (0.88–0.95). They differ only in how they order clean comments, through expert-specific score
-  offsets that no metric sees.
+* **The router split comments, not labels, and nothing is misrouted.** 93–100% of comments with a
+  rare label are also `toxic`, so one routing decision per comment can only separate toxic from
+  clean. The router does that well: none of the ~6,000 comments per seed that the linear head
+  scores ≥ 0.9 for `toxic` is sent away from the two "toxic" experts. But the linear head already
+  makes that split.
+* **Almost the same function where it counts.** At the top of each label's ranking (twice as many
+  comments as the label has positives), the MoE and linear heads overlap as much as two linear-head
+  seeds do (0.88–0.95). Most of their disagreement is in how they order clean comments, through
+  expert-specific score offsets that no metric sees. The exception is a small loss on rare-label
+  PR-AUC, which a same-size MLP shares.
+* **The head is not the bottleneck.** Giving each label its own gate makes the labels use different
+  experts (their gates on the same comment differ by 0.87 on a 0–1 scale) and changes nothing.
+  The frozen-encoder probes show why: heads that differ a lot on fixed BERT features all tie once
+  BERT is fine-tuned with them.
 * **Most F1 differences are threshold noise.** With thresholds tuned on test itself (not a fair
   score, but noise-free), the seed-to-seed spread of the macro-F1 differences shrinks about 4×, and
   no MoE head beats the baseline.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/figures/diagnosis_agreement_dark.png">
-  <img alt="The MoE head agrees with the linear head at the top of every label's ranking and disagrees only among clean comments" src="docs/figures/diagnosis_agreement_light.png">
+  <img alt="The MoE head agrees with the linear head at the top of every label's ranking and disagrees mostly among clean comments" src="docs/figures/diagnosis_agreement_light.png">
 </picture>
 
-**Follow-up (implemented, not yet trained).** [`configs/heads.yaml`](configs/heads.yaml)
-tests the explanation with four heads, each paired by seed with the runs above:
+The follow-up heads ([`configs/heads.yaml`](configs/heads.yaml), results in the tables above):
 
-| Run | Head | Tests |
-|---|---|---|
-| `mmoe_bce` | **Multi-gate MoE**: shared experts, one softmax gate per label ([Ma et al., 2018](https://dl.acm.org/doi/10.1145/3219819.3220007)) | Can labels pick different experts for the same comment? |
-| `labelattn_bce` | **Label-wise attention**: each label pools the token vectors with its own attention ([Vu et al., 2020](https://arxiv.org/abs/2007.06351)); shows which words drove each label | Is the single [CLS] vector the bottleneck? |
-| `mlp_bce` | One MLP with the MoE head's parameter count, no routing | Does extra capacity help at all? |
-| `moe_bce_noaux` | MoE head without the load-balancing loss | Does balancing force a bad split? |
+| Run | Head | Question | Answer |
+|---|---|---|---|
+| `mmoe_bce` | **Multi-gate MoE**: shared experts, one softmax gate per label ([Ma et al., 2018](https://dl.acm.org/doi/10.1145/3219819.3220007)) | Can labels pick different experts for the same comment? | Yes, and it does not help. |
+| `labelattn_bce` | **Label-wise attention**: each label pools the token vectors with its own attention ([Vu et al., 2020](https://arxiv.org/abs/2007.06351)); shows which words drove each label | Is the single [CLS] vector the bottleneck? | Not after fine-tuning. It is the best head on frozen features (+0.026 ROC-AUC). |
+| `mlp_bce` | One MLP with the MoE head's parameter count, no routing | Is it the capacity or the routing? | Neither helps; the MLP scores like the MoE. |
+| `moe_bce_noaux` | MoE head without the load-balancing loss | Does balancing force a bad split? | No. Without it, one expert takes 96–100% of comments and nothing changes. |
 
-[`configs/probes.yaml`](configs/probes.yaml) trains the same heads on a frozen encoder: if they
-differ there but tie once BERT is fine-tuned, the fine-tuned encoder already does what the head
-was meant to do. The report adds both studies to the results above once they have run.
-
-**Other next steps:** a stronger encoder ([`configs/encoders.yaml`](configs/encoders.yaml):
-DeBERTa-v3-base, set up but not yet run), inputs longer than 128 tokens, and MoE layers inside
-the encoder, routed per token.
+**Next steps:** inputs longer than 128 tokens (`toxic` ROC-AUC is 0.957 on the 19% of test
+comments that get cut, vs 0.974 on the rest; [`configs/length.yaml`](configs/length.yaml) tests 256
+and 512 tokens and head + tail truncation, set up but not yet run); an audit of the 730 test
+comments labelled clean that the models confidently score as toxic; ensembles; a stronger encoder
+([`configs/encoders.yaml`](configs/encoders.yaml): DeBERTa-v3-base, set up but not yet run); and
+MoE layers inside the encoder, routed per token.
 
 ## The problem
 
@@ -263,6 +324,7 @@ python scripts/run_ablation.py                                   # main study ->
 python scripts/run_ablation.py --config configs/encoders.yaml    # optional DeBERTa-v3 study
 python scripts/run_ablation.py --config configs/heads.yaml       # follow-up heads (docs/diagnosis.md)
 python scripts/run_ablation.py --config configs/probes.yaml      # the same heads on a frozen encoder
+python scripts/run_ablation.py --config configs/length.yaml      # longer inputs: 256 / 512 tokens, head + tail
 python scripts/make_report.py --update-readme
 python scripts/diagnose.py --data data                           # diagnostics (CPU) -> results/diagnosis.md
 ```
@@ -290,7 +352,7 @@ src/toxic_moe/
   train.py        AMP training loop, warm-up/decay schedule, best-epoch selection
   experiment.py   one end-to-end run -> results/<name>/
   predict.py      inference on raw text
-configs/          base settings, main ablation, DeBERTa study, follow-up heads, frozen-encoder probes
+configs/          base settings, main ablation, DeBERTa study, follow-up heads, frozen-encoder probes, input length
 scripts/          run_ablation.py, make_report.py, diagnose.py, download_data.sh
 notebooks/        train_on_colab.ipynb
 tests/            CPU test suite (tiny random BERT, synthetic data)

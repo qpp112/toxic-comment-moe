@@ -12,6 +12,7 @@ import yaml
 ARCHS = ("bert", "mlp", "moe", "mmoe", "label_attn")  # classification heads, see models.py
 LOSSES = ("bce", "weighted_bce", "focal", "cb_focal")
 AMP_DTYPES = ("auto", "bf16", "fp16")
+TRUNCATIONS = ("head", "head_tail")
 
 
 @dataclass
@@ -27,7 +28,8 @@ class Config:
     cache_dir: Optional[str] = None  # tokenization cache; defaults to <data_dir>/cache
     train_fraction: float = 1.0  # 0.05 reproduces the course-project setting
     val_fraction: float = 0.1  # held out from train.csv for model selection + thresholds
-    max_length: int = 128
+    max_length: int = 128  # tokens per comment, special tokens included (BERT: at most 512)
+    truncation: str = "head"  # longer comments: keep the "head" | the first and last halves ("head_tail")
 
     # --- model --------------------------------------------------------------
     # head: "bert" = linear | "mlp" = one hidden layer | "moe" = mixture of experts, one router per comment
@@ -90,6 +92,10 @@ class Config:
             raise ValueError("num_experts, expert_hidden, mlp_hidden and attn_hidden must be >= 1")
         if self.grad_accum_steps < 1:
             raise ValueError("grad_accum_steps must be >= 1")
+        if self.truncation not in TRUNCATIONS:
+            raise ValueError(f"truncation must be one of {TRUNCATIONS}, got {self.truncation!r}")
+        if self.max_length < 8:
+            raise ValueError("max_length must be >= 8")
         if self.amp_dtype not in AMP_DTYPES:
             raise ValueError(f"amp_dtype must be one of {AMP_DTYPES}, got {self.amp_dtype!r}")
         return self

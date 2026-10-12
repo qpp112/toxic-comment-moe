@@ -12,6 +12,8 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset, Sampler
 
+from .data import cut_tokens
+
 
 # ---------------------------------------------------------------------------
 # Tokenization
@@ -32,13 +34,18 @@ def encode_texts(
     cache_dir: Optional[str | Path] = None,
     tag: str = "texts",
     chunk_size: int = 20_000,
+    truncation: str = "head",
 ) -> List[np.ndarray]:
     """Tokenize ``texts`` once (truncation, no padding) and cache the token ids.
 
     Padding happens per batch in :class:`Collator`, so short comments are not padded
     to ``max_length`` -- most Jigsaw comments are far shorter than 128 tokens.
+    ``truncation`` decides which part of a longer comment is kept: its beginning
+    (``"head"``) or its first and last halves (``"head_tail"``); see :func:`cut_tokens`.
     """
     texts = list(texts)
+    if truncation != "head":
+        tag = f"{tag}-{truncation.replace('_', '')}"  # separate cache file; "head" keeps the old file name
     path = None
     if cache_dir is not None:
         cache_dir = Path(cache_dir)
@@ -50,9 +57,18 @@ def encode_texts(
             return [flat[offsets[i] : offsets[i + 1]] for i in range(len(offsets) - 1)]
 
     ids: List[np.ndarray] = []
-    for start in range(0, len(texts), chunk_size):
-        enc = tokenizer(texts[start : start + chunk_size], truncation=True, max_length=max_length)
-        ids.extend(np.asarray(x, dtype=np.int32) for x in enc["input_ids"])
+    if truncation == "head":
+        for start in range(0, len(texts), chunk_size):
+            enc = tokenizer(texts[start : start + chunk_size], truncation=True, max_length=max_length)
+            ids.extend(np.asarray(x, dtype=np.int32) for x in enc["input_ids"])
+    else:
+        budget = max_length - tokenizer.num_special_tokens_to_add(pair=False)
+        for start in range(0, len(texts), chunk_size):
+            # the full comment first; the model never sees more than max_length tokens
+            enc = tokenizer(texts[start : start + chunk_size], add_special_tokens=False, verbose=False)
+            for body in enc["input_ids"]:
+                full = tokenizer.build_inputs_with_special_tokens(cut_tokens(body, budget, truncation))
+                ids.append(np.asarray(full, dtype=np.int32))
 
     if path is not None:
         offsets = np.zeros(len(ids) + 1, dtype=np.int64)

@@ -1,33 +1,48 @@
 # Why the MoE head didn't help
 
 The 24-run study ([README](../README.md#results)) found that a Mixture-of-Experts head on BERT
-ties with a plain linear head. This page works out why, using only the saved runs
-(`metrics.json` and the test-set predictions; no extra training). It then sets up the follow-up
-experiments that test the explanation, including two heads built to get around it.
+ties with a plain linear head. This page works out why from the saved runs. It then tests that
+explanation with 18 more runs: four new heads × 3 seeds, including two built specifically to get
+around the MoE's problem, plus six heads trained on a frozen encoder.
 
-Every number here comes from [`scripts/diagnose.py`](../scripts/diagnose.py). Its full output
-is in [`results/diagnosis.md`](../results/diagnosis.md). Unless a section says otherwise, it
-compares `bert_bce` (linear head) with `moe_bce` (MoE head): same loss, same seeds, same data.
+Every number here comes from [`scripts/diagnose.py`](../scripts/diagnose.py) or
+[`scripts/make_report.py`](../scripts/make_report.py). Their full output is in
+[`results/diagnosis.md`](../results/diagnosis.md) and [`results/summary.md`](../results/summary.md).
+Unless a section says otherwise, comparisons are BERT-base with plain BCE, paired by seed with
+the linear-head baseline `bert_bce`: same loss, same seeds, same data.
 
 ## The short answer
 
-1. **The router learned to separate toxic from clean comments, which the linear head already
-   does.** In all 12 MoE runs, the positive comments of all six labels go mostly to the same
-   two experts. The labels never got experts of their own.
-2. **Where the metrics are decided, the MoE head ranks comments the same way the linear head
-   does.** At the top of each label's ranking, it agrees with the linear head as closely as a
-   second linear-head seed does. The two heads differ only in how they order the clean bulk,
-   which no metric looks at.
-3. **The small F1 differences in the results table are mostly threshold noise.** With the
-   noise from validation-tuned thresholds removed, the seed-to-seed spread of the macro-F1
-   differences shrinks about 4× (2–8×), and no MoE head is better than the baseline.
+1. **The router could only learn "toxic vs clean".** In `train.csv`, 93–100% of comments with a
+   rare label are also `toxic`. One routing decision per comment therefore cannot separate the
+   labels. In all 12 MoE runs, every label's positives go mostly to the same two experts.
+2. **Forcing label-specific experts does not help either.** The multi-gate MoE gives each label
+   its own gate, and the labels do end up on different experts: for the same comment, the six
+   label gates differ by 0.87 on a 0–1 scale. The scores still don't move (ROC-AUC +0.0002 ±
+   0.0001, PR-AUC −0.003 ± 0.002).
+3. **Once BERT is fine-tuned, the head hardly matters.** On a frozen encoder, the five heads span
+   0.026 ROC-AUC, and label-wise attention is far ahead. Fine-tuned, all five are within 0.0002 of
+   the linear head.
+4. **The MoE head's only measurable effect is a small cost, and the routing does not cause it.**
+   It loses 0.014 PR-AUC on the rare labels. An MLP head of the same size, with no routing at
+   all, loses the same (0.017). Load balancing makes no difference either: without it, the router
+   puts almost every comment on one expert, and the scores are unchanged.
 
-The underlying reason: **one router decision per comment cannot separate labels that almost
-always occur together.** Most comments with a rare label are also `toxic`. On top of that, a
-fine-tuned BERT can make its [CLS] vector good enough for a linear layer, which leaves the
-extra 1.2M parameters of the MoE head little to do.
+Averaging three seeds of the plain linear head gains more (+0.008 PR-AUC) than any head
+achieved. The remaining errors are concentrated in long comments and in what is probably label
+noise ([section 6](#6-where-the-remaining-errors-are)).
 
 ## 1. What the router learned
+
+How often each label comes with `toxic` in `train.csv`:
+
+| Label | Positives | Also `toxic` |
+|---|---:|---:|
+| `severe_toxic` | 1,595 | 100.0% |
+| `obscene` | 8,449 | 93.8% |
+| `threat` | 478 | 93.9% |
+| `insult` | 7,877 | 93.2% |
+| `identity_hate` | 1,405 | 92.7% |
 
 Total-variation distance between mean router weights (0 = same experts, 1 = disjoint):
 
@@ -40,20 +55,22 @@ Total-variation distance between mean router weights (0 = same experts, 1 = disj
 
 Toxic and clean comments are routed very differently (0.47–0.76). The six labels are routed
 almost the same way as each other (0.07–0.21). The load-balancing loss sits at 1.01–1.03 (1.0 =
-perfectly balanced), so balance is satisfied: clean comments spread over the four remaining
-experts.
+perfectly balanced): balance is met by spreading clean comments over the other four experts.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="figures/expert_routing_dark.png">
   <img alt="Router weight per expert for each label: all labels use the same two experts" src="figures/expert_routing_light.png">
 </picture>
 
-**The routing is not making mistakes.** About 38% of all test comments put most of their
+**The router is not making many mistakes.** About 38% of all test comments put most of their
 weight on the two "toxic" experts. That is far more than the 10% that are toxic, so the router
-acts as a generous "could be toxic" switch. Of the ~6,000 comments per seed that the linear head
-scores 0.9 or higher for `toxic`, the router sends **none** elsewhere.
+works as a generous "could be toxic" switch. Of the ~6,000 comments per seed that the linear
+head scores 0.9 or higher for `toxic`, the router sends **none** elsewhere. With the labels: the
+BCE-trained MoE sends at most 1% of any label's positives mostly to the "clean" experts (up to 3%
+with class-balanced focal loss). Almost all of those are missed, but they are too few to move
+the averages.
 
-## 2. Same ranking where it counts
+## 2. Almost the same ranking where it counts
 
 For each label, take the *K* highest-scored test comments (K = twice the label's positives).
 That is where PR-AUC and F1 are decided. Compare two models trained with different seeds:
@@ -72,17 +89,17 @@ That is where PR-AUC and F1 are decided. Compare two models trained with differe
 | `insult` | 0.927 | 0.923 | 0.864 | 0.747 |
 | `identity_hate` | 0.901 | 0.897 | 0.848 | 0.476 |
 
-At the top, the MoE head is as interchangeable with the linear head as one linear seed is with
-another. My first look at whole-ranking correlations (about 0.5 between the two heads for
+At the top, the MoE head is about as interchangeable with the linear head as one linear seed is
+with another. My first look at whole-ranking correlations (about 0.5 between the two heads for
 `severe_toxic` and `threat`) suggested the MoE had learned something different. Splitting the
-ranking shows that the disagreement is entirely in the bottom 90%, among comments that are
-almost all clean.
+ranking shows that most of the disagreement is in the bottom 90%, among comments that are almost
+all clean. There, each "clean" expert adds its own offset to the rare-label scores: the chosen
+expert explains 21–34% of the variance of those logits, against 5–8% for the linear head grouped
+the same way.
 
-**Where that disagreement comes from:** each "clean" expert adds its own offset to the
-rare-label scores. Among comments the MoE scores below 0.01 for `toxic`, the chosen expert
-explains 21–34% of the variance of the `severe_toxic`, `threat` and `identity_hate` logits.
-Grouping the linear head's logits for the same comments by the same experts explains only
-5–8%. The offsets are harmless: they reorder comments that are clean anyway.
+"About as interchangeable" is not "identical". On `severe_toxic` and `threat` the MoE's PR-AUC is
+0.02 lower. A bootstrap over the test comments puts that outside test-sampling noise: −0.022
+[−0.034, −0.011] and −0.026 [−0.047, −0.004]. Section 4 shows where that cost comes from.
 
 ## 3. The F1 differences are mostly threshold noise
 
@@ -102,74 +119,91 @@ removes that noise. Paired difference from the baseline, mean ± std over 3 seed
 | MoE, class-balanced focal | +0.003 ± 0.013 | −0.001 ± 0.002 | +0.007 ± 0.012 | −0.002 ± 0.005 |
 
 Transferring thresholds from validation to test costs 0.02 macro-F1 on average (0.04 on
-`toxic`). Without that noise, three of the four MoE heads come out slightly behind the
-baseline, and the fourth (weighted BCE) is within noise of it. The one consistent sign is
-weighted BCE on the linear head: +0.007 ± 0.005 rare-label F1. That is about 1.4 standard
-deviations over 3 seeds, so it is a hint, not a result.
+`toxic`). Without that noise, the seed-to-seed spread of the macro-F1 differences shrinks about
+4× (2–8×). Three of the four MoE heads then come out slightly behind the baseline, and the
+fourth (weighted BCE) is within noise of it. The one consistent sign is weighted BCE on the
+linear head: +0.007 ± 0.005 rare-label F1. That is about 1.4 standard deviations over 3 seeds,
+so it is a hint, not a result.
 
-## 4. A ceiling no head moves
+## 4. Testing the explanation
 
-Every one of the 24 runs scores 0.0061 lower mean ROC-AUC on test than on validation (std
-0.0003 across runs). The gap sits in `toxic` (0.014), `obscene` (0.011) and `insult` (0.009);
-`threat` and `identity_hate` have none. A gap that is the same for every head and loss is not
-something a different head can close. For scale: the single BERT-base here scores 0.9855.
-[Detoxify](https://huggingface.co/unitary/toxic-bert)'s BERT-base model reports 0.98636, and
-the top Kaggle leaderboard score was 0.98856.
+Four new heads, each trained with 3 seeds ([`configs/heads.yaml`](../configs/heads.yaml)), and
+the same heads on a frozen encoder ([`configs/probes.yaml`](../configs/probes.yaml), 1 seed):
 
-## 5. Testing the explanation
+* **Multi-gate MoE** ([Ma et al., 2018](https://dl.acm.org/doi/10.1145/3219819.3220007)): shared
+  experts, one softmax gate per label. It moves the routing decision from the comment to the
+  label, so `threat` and `obscene` can use different experts for the same comment.
+* **Label-wise attention** ([Vu et al., 2020](https://arxiv.org/abs/2007.06351)): each label pools
+  the token vectors with its own attention instead of sharing the [CLS] vector. It also shows
+  which words drove each label.
+* Two controls: an **MLP head** with the MoE head's parameter count and no routing, and the
+  **MoE head without load balancing**.
 
-The analysis above makes predictions, and the follow-up runs test them. All are BERT-base with
-plain BCE and the same seeds and split as the main study, so every run is paired with
-`bert_bce` and `moe_bce`.
+| Question | Run | Result (paired vs linear head, 3 seeds) | Answer |
+|---|---|---|---|
+| Can the labels use different experts if each has its own gate? | `mmoe_bce` | They do: the six labels' routing is 0.47 apart (MoE router: 0.13), and the gates of one comment differ by 0.87. Scores: ROC-AUC +0.0002 ± 0.0001, PR-AUC −0.003 ± 0.002. | The specialisation happens and does not help. |
+| Does each label need its own view of the words? | `labelattn_bce` | ROC-AUC −0.0001 ± 0.0002, PR-AUC +0.001 ± 0.001, rare-label PR-AUC +0.002 ± 0.002, with a sixth of the MoE head's parameters. | Not once BERT is fine-tuned: the [CLS] vector already carries it. |
+| Is the head's size what matters? | `mlp_bce` | ROC-AUC +0.0001 ± 0.0002, PR-AUC −0.008 ± 0.003, rare-label PR-AUC −0.017 ± 0.006. The MoE: +0.0000 ± 0.0001, −0.008 ± 0.001, −0.014 ± 0.002. | The MoE behaves like an MLP of its size. Its rare-label loss comes from the extra hidden layer, not the routing. |
+| Does load balancing hurt? | `moe_bce_noaux` | The router collapses: one expert takes 96–100% of comments in every seed. ROC-AUC +0.0000 ± 0.0001, PR-AUC −0.007 ± 0.005. | No. It makes no difference. |
+| Does the head matter once the encoder is fine-tuned? | frozen-encoder probes | Frozen: label attention 0.980 ROC-AUC vs 0.955 for the linear head (+0.026, PR-AUC 0.638 vs 0.492); the other heads +0.005 to +0.007. Fine-tuned: all within ±0.0002. | No. Fine-tuning absorbs what the head could add. |
 
-| Question | Run | What each outcome means |
-|---|---|---|
-| Is the head's size the bottleneck? | `mlp_bce`: one MLP as large as all six experts (1.19M parameters), no routing | MLP ≈ linear: extra capacity has nothing to do. MLP ≈ MoE > linear: capacity, not routing, was the useful part. |
-| Does fine-tuning make the head irrelevant? | [`configs/probes.yaml`](../configs/probes.yaml): the same heads on a **frozen** encoder | Big differences when frozen but none when fine-tuned: the encoder absorbs whatever the head adds. |
-| Does load balancing hurt? | `moe_bce_noaux`: MoE head without the balancing loss | Better without it: balancing forced a bad split. Same: the router finds the toxic/clean split either way. |
-| Can labels use different experts if each has its own gate? | `mmoe_bce`: **multi-gate MoE**, one softmax gate per label ([Ma et al., 2018](https://dl.acm.org/doi/10.1145/3219819.3220007)) | Gates that differ per label, plus rare-label gains: per-comment routing was the limit. Gates that collapse to one mixture: the labels are too correlated to split. |
-| Does each label need its own view of the words? | `labelattn_bce`: **label-wise attention**, each label pools the token vectors with its own attention instead of sharing [CLS] ([Vu et al., 2020](https://arxiv.org/abs/2007.06351)) | Rare-label gains: the single [CLS] vector was the bottleneck. A tie: [CLS] already carries what each label needs. |
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="figures/mmoe_gates_dark.png">
+  <img alt="Per-label gates of the multi-gate MoE: each label puts most of its weight on a different expert" src="figures/mmoe_gates_light.png">
+</picture>
 
-The two new heads attack the problem from different sides. The **multi-gate MoE** keeps the
-experts but moves the routing decision from the comment to the label: the gates for `threat`
-and `obscene` can pick different experts for the same comment, which a per-comment router
-cannot do by construction. The report measures this as the distance between a comment's six
-label gates. The **label-attention head** changes what each label sees rather than how much
-capacity it has. It also explains itself: for every prediction it shows which words each
-label attended to (see the notebook's demo cell).
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="figures/probes_dark.png">
+  <img alt="Gain over the linear head with a frozen encoder vs a fine-tuned encoder" src="figures/probes_light.png">
+</picture>
 
-**Expectations, written down before running anything.** I expect H1 to hold: every
-head ties with the linear head after fine-tuning, with clear differences only in the frozen
-probes. If any head helps, I expect the label-attention head on the rare labels, because it is
-the only change that gives a label information the [CLS] vector may have dropped. A tie would
-still be a result: it would show that with a fine-tuned encoder, this task leaves no room for a
-better head, and the next gains have to come from the encoder or the data.
+**My expectations, written down before the runs, and how they held up.** I expected every head to
+tie with the linear head after fine-tuning, with clear differences only in the frozen probes.
+That held. I expected the label-attention head to be the most likely to help on the rare labels.
+It is the best of the five fine-tuned heads, and the only one that does not lose rare-label
+PR-AUC, but the gain (+0.002 ± 0.002) is within noise. With a fine-tuned encoder, this task
+leaves no room for a better head. The next gains have to come from the input, the encoder or the
+data.
 
-**Cost:** [`configs/heads.yaml`](../configs/heads.yaml) is 4 settings × 3 seeds, about 8 minutes
-per run on an A100. Seed 42 alone is a complete comparison (≈ 35 minutes). The six frozen probes
-take a few minutes each.
+## 5. What the test labels add
 
-## 6. Checks that need the labels
+* **Telling kinds of toxicity apart.** Among the 6,090 toxic test comments, every head is within
+  0.005 of the linear head on every sub-label's ROC-AUC. `obscene` (0.877) and `insult` (0.853)
+  are the hard ones for all of them. This is the job that label-specialised experts were supposed to do.
+* **Ensembles.** Averaging the 3 seeds of the linear head gains +0.0004 ROC-AUC and +0.008 PR-AUC,
+  more than any head change. A linear head paired with an MoE head is no better than two linear
+  heads (PR-AUC 0.690 vs 0.694). The MoE learned nothing the linear head was missing.
 
-`python scripts/diagnose.py --results <results> --data <data>` (the notebook's diagnosis cell,
-CPU only) adds:
+## 6. Where the remaining errors are
 
-* **Label structure:** how often each rare label comes with `toxic` in `train.csv`.
-* **Ensembles:** averaging seeds, and whether a linear + MoE pair beats a linear + linear pair.
-  If the MoE had learned something different, mixing it in would help more.
-* **Telling kinds of toxicity apart:** sub-label ROC-AUC among toxic comments only, the job
-  label-specialised experts were meant to do.
-* **Long comments:** accuracy beyond the 128-token window, which no head can see.
-* **Routing mistakes:** recall of positives the router sends away from the toxic experts.
-* **Test-set noise:** bootstrap intervals for the MoE-minus-linear difference.
-* **Shared errors:** comments every model gets confidently wrong, a rough count of label noise.
+* **Validation vs test.** All 36 fine-tuned runs score 0.0061 lower ROC-AUC on test than on
+  validation (std 0.0003). The gap is in `toxic` (0.014), `obscene` (0.011) and `insult` (0.009),
+  not in the rare labels.
+* **Long comments.** 19% of test comments are longer than the 128-token input window, so the
+  model never sees their end. On them, ROC-AUC drops for the frequent labels: `toxic` 0.957 vs
+  0.974 on short comments, `obscene` 0.966 vs 0.982, `insult` 0.968 vs 0.981. The rare labels
+  are barely affected.
+* **Probable label noise.** Averaged over all 36 fine-tuned runs, 730 test comments labelled
+  clean get p(`toxic`) ≥ 0.9, while only 34 of the 6,090 comments labelled toxic get ≤ 0.05.
+* **For scale:** this single BERT-base scores 0.9855.
+  [Detoxify](https://huggingface.co/unitary/toxic-bert)'s BERT-base model reports 0.98636, and the
+  top Kaggle leaderboard score was 0.98856.
 
-## What I'd try after that
+## What I'd try next
 
-* **MoE where it is usually used:** replace the encoder's feed-forward layers with experts that
-  route *per token*, starting from BERT's own weights ("sparse upcycling",
-  [Komatsuzaki et al., 2023](https://arxiv.org/abs/2212.05055)). Tokens such as slurs, threats
-  and insults are far more distinct from each other than whole comments are.
-* **Longer inputs** (256–512 tokens) if the long-comment check shows that the truncated part
-  matters.
-* **Ensembles** of seeds or encoders: the most reliable gain on this competition's leaderboard.
+* **Longer inputs**, the clearest headroom: the frequent labels lose accuracy on the 19% of
+  comments cut at 128 tokens. [`configs/length.yaml`](../configs/length.yaml) is set up and not yet
+  run. It keeps the linear head + BCE and changes only the input: 256 tokens, 512 tokens, and the
+  first 63 + last 63 tokens at the baseline's cost (head + tail truncation, Sun et al., 2019).
+  The diagnostics then compare each one on short and long comments.
+  *Expectations, written before running:* 512 tokens raises `toxic`, `obscene` and `insult` ROC-AUC
+  on long comments without closing the gap to short comments, since long comments are also harder
+  to judge. That adds only a few ten-thousandths to the overall mean, because 81% of comments are
+  unaffected. 256 tokens gets most of that gain. Head + tail helps only if the end of a long
+  comment matters more than its middle. The rare labels do not change.
+* **A look at the 730 confident disagreements** (`diagnose.py --show-examples`), to measure how
+  much of the remaining error is label noise.
+* **Ensembles** of seeds or encoders: the only thing here that beat the single baseline.
+* **MoE where it is usually used:** experts inside the encoder's feed-forward layers, routed per
+  token and initialised from BERT's own weights ("sparse upcycling",
+  [Komatsuzaki et al., 2023](https://arxiv.org/abs/2212.05055)).

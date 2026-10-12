@@ -3,6 +3,7 @@ import pytest
 
 from toxic_moe import LABELS
 from toxic_moe.data import (
+    cut_tokens,
     ensure_extracted,
     label_counts,
     load_test,
@@ -84,3 +85,15 @@ def test_subsample_fraction(data_dir):
 def test_label_counts():
     pos, n = label_counts(np.array([[1, 0], [1, 1], [0, 0]]))
     assert pos.tolist() == [2, 1] and n == 3
+
+
+def test_cut_tokens_head_and_head_tail():
+    ids = list(range(10))
+    assert cut_tokens(ids, 20) == ids  # short comments are untouched in both modes
+    assert cut_tokens(ids, 20, "head_tail") == ids
+    assert cut_tokens(ids, 6) == [0, 1, 2, 3, 4, 5]
+    assert cut_tokens(ids, 6, "head_tail") == [0, 1, 2, 7, 8, 9]
+    assert cut_tokens(ids, 5, "head_tail") == [0, 1, 7, 8, 9]  # odd budget: the extra token goes to the tail
+    assert cut_tokens(ids, 0, "head_tail") == []
+    with pytest.raises(ValueError):
+        cut_tokens(ids, 4, "middle")

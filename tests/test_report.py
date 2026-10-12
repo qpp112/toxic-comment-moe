@@ -137,3 +137,22 @@ def test_follow_up_sections_and_figures(follow_up_dir, tmp_path):
     # probes are compared with their fine-tuned counterparts; the mean-pooling control has none
     probes = md.split("Frozen encoder vs fine-tuned encoder")[1]
     assert "| probe_linear_mean |" in probes and "| – |" in probes
+
+
+def test_length_study_section_and_figure(tmp_path):
+    pytest.importorskip("matplotlib")
+    out = tmp_path / "results"
+    for seed in (42, 43):
+        _fake_run(out, "bert_bce", "bert", "bce", "bert-base-uncased", seed, 1.0)
+        for group, skill, title in [("bert_bce_len256", 1.05, "256 tokens"), ("bert_bce_headtail", 1.0, "head+tail")]:
+            _fake_run(out, group, "bert", "bce", "bert-base-uncased", seed, skill, study="length", title=title)
+    report = _load_report_module()
+    settings = report.group_runs(report.load_runs(out))
+    md = report.summary_markdown(settings, "docs/figures", tmp_path / "figs")
+    section = md.split("**Longer inputs**")[1]
+    assert "| 256 tokens |" in section and "| head+tail |" in section and "Δ test ROC-AUC per label" in section
+    assert (
+        "**Loss × head ablation" in md.split("**Longer inputs**")[0]
+    )  # the 128-token baseline stays in the main table
+    stems = {p.stem.rsplit("_", 1)[0] for p in report.make_figures(settings, tmp_path / "figs")}
+    assert "length" in stems

@@ -52,6 +52,19 @@ def test_tokenization_cache_round_trip(tiny_encoder_dir, tmp_path):
     assert all(np.array_equal(a, b) for a, b in zip(first, second))
 
 
+def test_head_tail_truncation_keeps_both_ends(tiny_encoder_dir, tmp_path):
+    tok = transformers.AutoTokenizer.from_pretrained(tiny_encoder_dir)
+    words = "hello thanks article edit page great idiot stupid kill hate".split()
+    text = " ".join(words)
+    head = encode_texts(tok, [text], 8, cache_dir=tmp_path / "c", tag="t")[0]
+    both = encode_texts(tok, [text], 8, cache_dir=tmp_path / "c", tag="t", truncation="head_tail")[0]
+    assert tok.convert_ids_to_tokens(head.tolist()) == ["[CLS]", *words[:6], "[SEP]"]
+    assert tok.convert_ids_to_tokens(both.tolist()) == ["[CLS]", *words[:3], *words[-3:], "[SEP]"]
+    assert len(list((tmp_path / "c").glob("*.npz"))) == 2  # the two modes never share a cache file
+    short = encode_texts(tok, ["hello you"], 8, truncation="head_tail")[0]
+    assert tok.convert_ids_to_tokens(short.tolist()) == ["[CLS]", "hello", "you", "[SEP]"]
+
+
 @pytest.mark.parametrize(
     "arch,loss,freeze",
     [
@@ -63,6 +76,7 @@ def test_tokenization_cache_round_trip(tiny_encoder_dir, tmp_path):
     ],
 )
 def test_run_end_to_end(arch, loss, freeze, data_dir, tiny_encoder_dir, tmp_path):
+    truncation = "head_tail" if freeze else "head"
     cfg = Config(
         name=f"{arch}_{loss}",
         data_dir=str(data_dir),
@@ -70,6 +84,7 @@ def test_run_end_to_end(arch, loss, freeze, data_dir, tiny_encoder_dir, tmp_path
         arch=arch,
         loss=loss,
         freeze_encoder=freeze,
+        truncation=truncation,
         epochs=2,
         batch_size=16,
         eval_batch_size=32,
@@ -95,6 +110,7 @@ def test_run_end_to_end(arch, loss, freeze, data_dir, tiny_encoder_dir, tmp_path
         saved["group"] == cfg.name
         and saved["seed"] == 42
         and saved["freeze_encoder"] is freeze
+        and saved["truncation"] == truncation
         and saved["environment"]["precision"] in ("fp32", "fp16", "bf16")
     )
     assert 0.0 <= saved["test"]["roc_auc_mean"] <= 1.0

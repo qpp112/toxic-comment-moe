@@ -1,0 +1,23 @@
+# Does the model need to see more of each comment?
+#
+# 19% of test comments are longer than the 128-token input window, and on those comments
+# the baseline's ROC-AUC drops for the frequent labels (toxic 0.957 vs 0.974 on shorter
+# comments; obscene and insult similar). See docs/diagnosis.md, section 6.
+#
+#   bert_bce_len256    the baseline (linear head, BCE) with 256 tokens
+#   bert_bce_len512    ... with 512 tokens, BERT's maximum
+#   bert_bce_headtail  still 128 tokens, but the first 63 + last 63 instead of the first 126:
+#                      same compute as the baseline; tests whether the end of a long comment
+#                      matters more than its middle (Sun et al., 2019)
+#
+# Same seeds and data split as the main study, so every run is paired by seed with bert_bce.
+# Batches are padded per batch, so only long comments cost more: expect roughly 1.3x (256)
+# and 1.5-2x (512) the baseline's time per run. 512 tokens at batch size 32 needs an A100 or
+# L4; on a 16 GB GPU add  --set batch_size=16 grad_accum_steps=2
+base: base.yaml
+seeds: [42, 43, 44]
+common: {study: length, arch: bert, loss: bce}
+runs:
+  - {name: bert_bce_len256,   max_length: 256, title: "256 tokens"}
+  - {name: bert_bce_len512,   max_length: 512, title: "512 tokens", eval_batch_size: 128}
+  - {name: bert_bce_headtail, max_length: 128, truncation: head_tail, title: "128 tokens: first 63 + last 63"}

@@ -10,7 +10,8 @@ problem. Reviewing your own earlier work critically is part of the point.
 
 **Outcome.** With these problems fixed and the full dataset, the course project's main conclusion
 did not hold up: weighted losses and the MoE head do not beat plain BERT + BCE once thresholds are
-tuned on validation data. See the [README](../README.md) for the 24-run study.
+tuned on validation data. See the [README](../README.md) for the 24-run study and
+[`diagnosis.md`](diagnosis.md) for why the MoE head failed and what the follow-up runs showed.
 
 ## What the course version found
 

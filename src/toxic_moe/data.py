@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import zipfile
 from pathlib import Path
-from typing import Tuple
+from typing import List, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -75,6 +75,26 @@ def load_test(data_dir: str | Path) -> pd.DataFrame:
     df = df[(df[LABELS] != -1).all(axis=1)].copy()
     df[LABELS] = df[LABELS].astype(np.int8)
     return df.reset_index(drop=True)
+
+
+def cut_tokens(ids: Sequence[int], budget: int, mode: str = "head") -> List[int]:
+    """Keep at most ``budget`` tokens of a comment (special tokens are added afterwards).
+
+    * ``head``: the first ``budget`` tokens, which is what ``truncation=True`` does.
+    * ``head_tail``: the first ``budget // 2`` and the last ``budget - budget // 2`` tokens, so the
+      end of a long comment is seen as well (the head + tail strategy of Sun et al., 2019).
+    """
+    ids = list(ids)
+    if budget < 0:
+        raise ValueError("budget must be >= 0")
+    if len(ids) <= budget:
+        return ids
+    if mode == "head":
+        return ids[:budget]
+    if mode == "head_tail":
+        head = budget // 2
+        return ids[:head] + ids[len(ids) - (budget - head) :]
+    raise ValueError(f"Unknown truncation mode {mode!r}; expected 'head' or 'head_tail'")
 
 
 def stratify_keys(y: np.ndarray, min_count: int = 2) -> np.ndarray:

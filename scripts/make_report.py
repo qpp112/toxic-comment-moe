@@ -39,7 +39,7 @@ HEAD_NAMES = {
 }
 HEAD_TITLES = {k: v[0].upper() + v[1:] for k, v in HEAD_NAMES.items()}
 HEAD_ORDER = ["bert", "mlp", "moe", "mmoe", "label_attn"]
-STUDY_ORDER = ["main", "heads", "probes", "encoders"]
+STUDY_ORDER = ["main", "heads", "probes", "length", "encoders"]
 MMOE = "mmoe_bce"
 PROBE_BASELINE = "probe_linear"
 # frozen-encoder probe -> the fine-tuned BERT-base + BCE setting with the same head
@@ -413,6 +413,50 @@ def probes_section(settings: Dict[str, Setting]) -> List[str]:
     ]
 
 
+def length_runs(settings: Dict[str, Setting]) -> List[Setting]:
+    """The length study in reading order: longer windows by length, then the head+tail variants."""
+    runs = [s for s in settings.values() if s.study == "length"]
+    return sorted(
+        runs, key=lambda s: (s.first.get("truncation", "head") != "head", s.first.get("max_length", 0), s.name)
+    )
+
+
+def length_section(settings: Dict[str, Setting]) -> List[str]:
+    """Longer inputs / head+tail truncation vs the 128-token baseline, overall and per label."""
+    base = settings.get(BASELINE)
+    runs = length_runs(settings)
+    if base is None or not runs:
+        return []
+    n = base.n
+    label_rows = [
+        "| Input | " + " | ".join(f"`{lab}`" for lab in LABELS) + " |",
+        "|---|" + "---:|" * len(LABELS),
+    ]
+    for s in runs:
+        cells = []
+        for j in range(len(LABELS)):
+            m, sd, k = paired_delta(base, s, per_label("roc_auc", j))
+            cells.append("–" if not k else (f"{m:+.4f} ± {sd:.4f}" if k > 1 else f"{m:+.4f}"))
+        label_rows.append(f"| {s.title} | " + " | ".join(cells) + " |")
+    return [
+        "",
+        "**Longer inputs** (`configs/length.yaml`; linear head + BCE, each minus the 128-token baseline on the same "
+        f"seed; {'mean ± std over ' + str(n) + ' seeds' if n > 1 else 'one seed'}). The baseline sees the first 126 "
+        "tokens of each comment.",
+        "",
+        paired_table(
+            base,
+            runs,
+            lambda s: [s.title, f"{s.first.get('wall_clock_minutes', float('nan')):.0f} min"],
+            ["Input", "Time / run"],
+        ),  # fmt: skip
+        "",
+        "Δ test ROC-AUC per label:",
+        "",
+        "\n".join(label_rows),
+    ]
+
+
 def details_table(settings: List[Setting]) -> str:
     lines = [
         "| Setting | Seeds | Best epoch per seed | Min / run | Precision | GPU |",
@@ -476,6 +520,7 @@ def summary_markdown(settings: Dict[str, Setting], figure_prefix: str, figure_di
         ]
     parts += heads_section(settings)
     parts += probes_section(settings)
+    parts += length_section(settings)
     if others:
         enc_rows = [
             s
@@ -510,6 +555,7 @@ def summary_markdown(settings: Dict[str, Setting], figure_prefix: str, figure_di
     figs = [
         ("ablation", "Each setting minus the BERT + BCE baseline, paired by seed"),
         ("heads", "Follow-up heads minus the BERT + BCE baseline, paired by seed"),
+        ("length", "Longer inputs minus the 128-token baseline, paired by seed"),
         ("probes", "Head gains with a frozen vs a fine-tuned encoder"),
         ("mmoe_gates", "Which experts each label's gate uses in the multi-gate MoE head"),
         ("encoders", "BERT-base vs DeBERTa-v3-base"),
@@ -610,7 +656,7 @@ def _forest(plt, th, base: Setting, rows: List[Setting], row_labels: List[str], 
     from matplotlib.ticker import FormatStrFormatter, MaxNLocator
 
     keys = ["roc", "pr", "f1"]
-    height = 2.0 + 0.42 * len(rows)
+    height = max(3.8, 2.0 + 0.42 * len(rows))  # room for title, subtitle and legend even with few rows
     left = min(0.36, 0.06 + 0.0068 * max(len(t) for t in row_labels))
     fig, axes = _figure(plt, th, 12, height, ncols=3, sharey=True)
     fig.subplots_adjust(top=1 - 1.2 / height, bottom=0.35 / height + 0.04, left=left, right=0.98, wspace=0.12)
@@ -640,7 +686,7 @@ def _forest(plt, th, base: Setting, rows: List[Setting], row_labels: List[str], 
                 zorder=3,
             )
             lim = max(lim, abs(m) + sd)
-        lim = lim * 1.3 or 10**-digits
+        lim = max(lim * 1.3, 2 * 10**-digits)  # never narrower than the printed precision
         ax.set_xlim(-lim, lim)
         ax.xaxis.set_major_locator(MaxNLocator(nbins=4, symmetric=True))
         ax.xaxis.set_major_formatter(FormatStrFormatter(f"%+.{digits}f"))
@@ -658,7 +704,8 @@ def _forest(plt, th, base: Setting, rows: List[Setting], row_labels: List[str], 
         if shown:
             legend.append((HEAD_TITLES[shown[0]] if len(shown) == 1 else family, shown[0]))
     handles = [Line2D([], [], marker="o", linestyle="", color=th["series"][a], markersize=7) for _, a in legend]
-    _legend(fig, th, handles, [name for name, _ in legend], y=1 - 0.62 / height)
+    if len(legend) > 1:  # a single kind of head needs no legend; the title names it
+        _legend(fig, th, handles, [name for name, _ in legend], y=1 - 0.62 / height)
     fig.savefig(out, dpi=160, facecolor=th["surface"])
     plt.close(fig)
 
@@ -677,6 +724,13 @@ def fig_heads(plt, settings: Dict[str, Setting], th, out: Path):
     rows += [x for x in sorted(settings.values(), key=sort_key) if x.study == "heads"]
     sub = "BERT-base, plain BCE. Each head minus the linear head on the same seed. Right of 0 = better."
     _forest(plt, th, base, rows, [x.title for x in rows], "Follow-up heads vs the linear head", sub, out)
+
+
+def fig_length(plt, settings: Dict[str, Setting], th, out: Path):
+    base = settings[BASELINE]
+    rows = length_runs(settings)
+    sub = "Linear head + BCE. Each input setting minus the 128-token baseline on the same seed. Right of 0 = better."
+    _forest(plt, th, base, rows, [x.title for x in rows], "Does the model need more of each comment?", sub, out)
 
 
 def fig_probes(plt, settings: Dict[str, Setting], th, out: Path):
@@ -907,6 +961,7 @@ def make_figures(settings: Dict[str, Setting], fig_dir: Path) -> List[Path]:
     jobs: list = [
         ("ablation", fig_ablation, BASELINE in settings and len(main) >= 2),
         ("heads", fig_heads, BASELINE in settings and any(s.study == "heads" for s in settings.values())),
+        ("length", fig_length, BASELINE in settings and any(s.study == "length" for s in settings.values())),
         ("probes", fig_probes, PROBE_BASELINE in settings and sum(s.study == "probes" for s in settings.values()) > 1),
         ("mmoe_gates", fig_mmoe_gates, mmoe is not None and "label_gates" in (mmoe.first["test"].get("gates") or {})),
         ("encoders", fig_encoders, len({s.encoder for s in settings.values()}) > 1),

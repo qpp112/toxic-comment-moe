@@ -38,6 +38,7 @@ from toxic_moe.metrics import mean_pairwise_tv  # noqa: E402
 
 BASELINE, MOE = "bert_bce", "moe_bce"
 FOLLOW_UP = ["mlp_bce", "moe_bce_noaux", "mmoe_bce", "labelattn_bce"]
+LENGTH = ["bert_bce_len256", "bert_bce_len512", "bert_bce_headtail"]  # configs/length.yaml
 NAMES = {
     "bert_bce": "Linear",
     "moe_bce": "MoE",
@@ -46,6 +47,9 @@ NAMES = {
     "moe_bce_noaux": "MoE, no balancing",
     "mmoe_bce": "Multi-gate MoE",
     "labelattn_bce": "Label attention",
+    "bert_bce_len256": "Linear, 256 tokens",
+    "bert_bce_len512": "Linear, 512 tokens",
+    "bert_bce_headtail": "Linear, first + last 63 tokens",
 }
 RARE = [LABELS.index(k) for k in ("severe_toxic", "threat", "identity_hate")]
 SEED_SUFFIX = re.compile(r"_s\d+$")
@@ -303,12 +307,14 @@ def threshold_transfer(groups: Dict[str, List[Run]]) -> Tuple[str, dict]:
 
 
 def val_test_gap(groups: Dict[str, List[Run]]) -> Tuple[str, dict]:
-    """Validation ROC-AUC minus test ROC-AUC: a ceiling shared by every model?"""
+    """Validation ROC-AUC minus test ROC-AUC: a ceiling shared by every fine-tuned model?"""
     runs = [
         r
         for rs in groups.values()
         for r in rs
-        if "val" in r.metrics and r.metrics.get("encoder", "bert-base-uncased") == "bert-base-uncased"
+        if "val" in r.metrics
+        and r.metrics.get("encoder", "bert-base-uncased") == "bert-base-uncased"
+        and not r.metrics.get("freeze_encoder")  # frozen-encoder probes are a different kind of model
     ]
     if not runs:
         return "", {}
@@ -321,7 +327,7 @@ def val_test_gap(groups: Dict[str, List[Run]]) -> Tuple[str, dict]:
         [
             "## Validation vs test",
             "",
-            f"Over all {len(runs)} BERT-base runs, mean ROC-AUC is {per_run.mean():.4f} lower on the test set than on "
+            f"Over all {len(runs)} fine-tuned BERT-base runs, mean ROC-AUC is {per_run.mean():.4f} lower on the test set than on "
             f"the validation split (std over runs {std:.4f}). Per label: "
             + ", ".join(f"`{k}` {v:+.4f}" for k, v in per_label.items())
             + ". A gap that is the same for every head and loss is not something a different head can close.",
@@ -613,7 +619,7 @@ def length_effect(groups: Dict[str, List[Run]], lab: Labels) -> Tuple[str, dict]
     y = lab.y_test
     out: Dict[str, Any] = {"share_long": float(long.mean()), "unit": unit, "auc": {}}
     rows = []
-    for group in [BASELINE, MOE, *FOLLOW_UP]:
+    for group in [BASELINE, MOE, *FOLLOW_UP, *LENGTH]:
         runs = with_predictions(groups.get(group, []))
         if not runs:
             continue

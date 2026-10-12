@@ -14,6 +14,7 @@ import numpy as np
 import torch
 
 from . import LABELS
+from .batching import Collator, encode_texts
 from .config import Config
 from .models import build_model
 
@@ -61,6 +62,12 @@ class ToxicityPredictor:
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         self.model.to(self.device).eval()
 
+    def encode(self, texts: Sequence[str]) -> Dict[str, torch.Tensor]:
+        """Tokenize exactly as in training (same length limit and truncation), then pad."""
+        ids = encode_texts(self.tokenizer, list(texts), self.cfg.max_length, truncation=self.cfg.truncation)
+        batch = Collator(self.tokenizer.pad_token_id or 0)([{"index": i, "input_ids": x} for i, x in enumerate(ids)])
+        return {"input_ids": batch["input_ids"], "attention_mask": batch["attention_mask"]}
+
     @torch.no_grad()
     def __call__(self, texts: Sequence[str], top_words: int = 5) -> List[Dict[str, Any]]:
         """Probabilities and flagged labels per text, plus what the head did:
@@ -69,9 +76,7 @@ class ToxicityPredictor:
         * Multi-gate head: ``expert_weights`` per label.
         * Label-attention head: ``evidence``, the ``top_words`` words each label attended to most.
         """
-        enc = self.tokenizer(
-            list(texts), truncation=True, max_length=self.cfg.max_length, padding=True, return_tensors="pt"
-        )
+        enc = self.encode(texts)
         out = self.model(enc["input_ids"].to(self.device), enc["attention_mask"].to(self.device))
         probs = torch.sigmoid(out.logits.float()).cpu().numpy()
         gates = None if out.gates is None else out.gates.float().cpu().numpy()

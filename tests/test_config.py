@@ -23,6 +23,8 @@ def test_defaults_are_valid():
         {"amp_dtype": "fp8"},
         {"mlp_hidden": 0},
         {"arch": "transformer"},
+        {"truncation": "tail"},
+        {"max_length": 4},
     ],
 )
 def test_invalid_values_rejected(bad):
@@ -104,3 +106,15 @@ def test_load_config_from_yaml(tmp_path):
     p.write_text("name: demo\narch: moe\nloss: cb_focal\n")
     cfg = load_config(p, {"epochs": 3})
     assert (cfg.name, cfg.arch, cfg.loss, cfg.epochs) == ("demo", "moe", "cb_focal", 3)
+
+
+def test_length_study_parses():
+    runs = load_ablation(ROOT / "configs" / "length.yaml")
+    assert len(runs) == 9 and {r.study for r in runs} == {"length"}
+    assert {(r.arch, r.loss) for r in runs} == {("bert", "bce")}
+    assert {(r.group, r.max_length, r.truncation) for r in runs} == {
+        ("bert_bce_len256", 256, "head"),
+        ("bert_bce_len512", 512, "head"),
+        ("bert_bce_headtail", 128, "head_tail"),
+    }
+    assert [r.name for r in runs[:3]] == ["bert_bce_len256_s42", "bert_bce_len512_s42", "bert_bce_headtail_s42"]
