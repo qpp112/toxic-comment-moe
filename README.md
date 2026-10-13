@@ -12,11 +12,11 @@ and a Mixture-of-Experts (MoE) head looked promising. This repository rebuilds t
 properly and tests both ideas in a controlled study: **2 classification heads × 4 losses × 3 seeds
 = 24 BERT-base runs** on the full training set (160k comments), scored on Kaggle's official
 labelled test set (64k comments), with decision thresholds tuned on a validation split only.
-A follow-up of **18 more runs** then works out why the MoE head failed and tests two heads built
-to get around it.
+A follow-up of **27 more runs** works out why the MoE head failed, tests two heads built to get
+around it, and tests longer inputs.
 
 **Result: no head and no loss beats plain BERT + BCE, including the two heads built to fix the
-MoE's problem.**
+MoE's problem. Letting BERT read more of each comment does.**
 
 * **All 8 settings tie on ranking quality.** Test ROC-AUC spans 0.9850–0.9858 (baseline
   0.9855 ± 0.0001). Plain BCE has the best PR-AUC; every alternative is 0.005–0.024 lower. On
@@ -38,9 +38,17 @@ MoE's problem.**
   beats a linear head by 0.026 ROC-AUC. Fine-tuned, all five heads are within 0.0002 of the
   linear head. The MoE head's small loss on rare-label PR-AUC (−0.014) is matched by an MLP of the same
   size (−0.017), so it comes from the extra layer, not the routing.
-* **Where the headroom is.** Averaging 3 seeds adds more PR-AUC (+0.008) than any head. The
-  remaining errors sit in long comments (19% are cut at 128 tokens) and in what looks like label
-  noise. [`docs/diagnosis.md`](docs/diagnosis.md) has the full analysis.
+* **What helps is reading more of each comment.** 19% of test comments are longer than the
+  128-token input. Raising it to 512 tokens adds +0.0014 ± 0.0002 ROC-AUC and +0.006 ± 0.002
+  PR-AUC (better on every seed) for under 10% more training time, reaching 0.9868. Keeping the
+  first 63 and last 63 tokens instead of the first 126 gives +0.0011 ± 0.0002 at no extra cost.
+  No head or loss raised ROC-AUC by more than 0.0003, and averaging 3 seeds by 0.0004. One
+  caveat: these runs used a newer `transformers` release (5.18 vs 5.17), so a same-environment
+  re-run of the baseline is queued as a control.
+* **Where the rest of the headroom is.** Averaging 3 seeds adds +0.008 PR-AUC. The models also
+  agree on many of their mistakes: averaged over 36 runs, 730 test comments labelled clean get
+  p(`toxic`) ≥ 0.9, which looks like label noise. [`docs/diagnosis.md`](docs/diagnosis.md) has
+  the full analysis.
 
 [`docs/course_project.md`](docs/course_project.md) describes the original project and the bugs
 this version fixes.
@@ -52,15 +60,15 @@ Trained on 143,613 comments (100% of `train.csv` minus a 15,958-comment validati
 
 **Difference from the baseline (BERT + linear head + BCE), paired by seed.** Positive = better than the baseline. Mean ± std over 3 seeds.
 
-| Head | Loss | Δ ROC-AUC | Δ PR-AUC | Δ Macro-F1 (val-tuned thr.) | Δ Rare-label F1 |
-|---|---|---:|---:|---:|---:|
-| Linear head | Weighted BCE | -0.0004 ± 0.0003 | -0.022 ± 0.005 | +0.005 ± 0.012 | +0.013 ± 0.022 |
-| Linear head | Focal | +0.0003 ± 0.0001 | -0.005 ± 0.002 | -0.003 ± 0.016 | -0.003 ± 0.023 |
-| Linear head | Class-balanced focal | +0.0001 ± 0.0002 | -0.012 ± 0.002 | -0.001 ± 0.018 | +0.001 ± 0.026 |
-| MoE head | BCE | +0.0000 ± 0.0001 | -0.008 ± 0.001 | +0.002 ± 0.013 | +0.001 ± 0.014 |
-| MoE head | Weighted BCE | -0.0002 ± 0.0001 | -0.024 ± 0.004 | +0.007 ± 0.012 | +0.017 ± 0.015 |
-| MoE head | Focal | +0.0002 ± 0.0000 | -0.009 ± 0.002 | +0.001 ± 0.011 | +0.000 ± 0.013 |
-| MoE head | Class-balanced focal | +0.0000 ± 0.0002 | -0.010 ± 0.006 | +0.003 ± 0.013 | +0.007 ± 0.012 |
+| Head | Loss | Δ ROC-AUC | Δ PR-AUC | Δ Rare-label PR-AUC | Δ Macro-F1 (val-tuned thr.) | Δ Rare-label F1 |
+|---|---|---:|---:|---:|---:|---:|
+| Linear head | Weighted BCE | -0.0004 ± 0.0003 | -0.022 ± 0.005 | -0.023 ± 0.008 | +0.005 ± 0.012 | +0.013 ± 0.022 |
+| Linear head | Focal | +0.0003 ± 0.0001 | -0.005 ± 0.002 | -0.009 ± 0.006 | -0.003 ± 0.016 | -0.003 ± 0.023 |
+| Linear head | Class-balanced focal | +0.0001 ± 0.0002 | -0.012 ± 0.002 | -0.020 ± 0.005 | -0.001 ± 0.018 | +0.001 ± 0.026 |
+| MoE head | BCE | +0.0000 ± 0.0001 | -0.008 ± 0.001 | -0.014 ± 0.002 | +0.002 ± 0.013 | +0.001 ± 0.014 |
+| MoE head | Weighted BCE | -0.0002 ± 0.0001 | -0.024 ± 0.004 | -0.035 ± 0.005 | +0.007 ± 0.012 | +0.017 ± 0.015 |
+| MoE head | Focal | +0.0002 ± 0.0000 | -0.009 ± 0.002 | -0.016 ± 0.004 | +0.001 ± 0.011 | +0.000 ± 0.013 |
+| MoE head | Class-balanced focal | +0.0000 ± 0.0002 | -0.010 ± 0.006 | -0.018 ± 0.012 | +0.003 ± 0.013 | +0.007 ± 0.012 |
 
 **Routing.** Across all 12 MoE runs, comments carrying any toxic label put on average 90% (minimum 61%) of their router weight on the same two experts, whatever the kind of toxicity, while clean comments put 29% on those two experts (uniform routing would be 33%). The router learned a toxic-vs-clean split, not experts for specific kinds of toxicity.
 
@@ -77,17 +85,17 @@ Trained on 143,613 comments (100% of `train.csv` minus a 15,958-comment validati
 | MoE head | Focal | 0.9857 ± 0.0001 | 0.679 ± 0.004 | **0.619 ± 0.002** | 0.618 ± 0.005 | 0.533 ± 0.004 |
 | MoE head | Class-balanced focal | 0.9855 ± 0.0001 | 0.677 ± 0.004 | 0.548 ± 0.001 | 0.620 ± 0.004 | 0.540 ± 0.007 |
 
-¹ Mean test F1 over the three rarest labels: `severe_toxic`, `threat`, `identity_hate`.
+¹ Mean over the three rarest labels: `severe_toxic`, `threat`, `identity_hate`.
 
 **Follow-up: heads built around the MoE head's failure** (BERT-base, plain BCE, each minus the linear-head baseline on the same seed; mean ± std over 3 seeds). Why these heads: `docs/diagnosis.md`.
 
-| Head | Head params | Δ ROC-AUC | Δ PR-AUC | Δ Macro-F1 (val-tuned thr.) | Δ Rare-label F1 |
-|---|---|---:|---:|---:|---:|
-| MoE head, BCE | 1.20M | +0.0000 ± 0.0001 | -0.008 ± 0.001 | +0.002 ± 0.013 | +0.001 ± 0.014 |
-| MLP head, same size as the MoE head | 1.19M | +0.0001 ± 0.0002 | -0.008 ± 0.003 | +0.002 ± 0.007 | +0.001 ± 0.010 |
-| MoE head, no load balancing | 1.20M | +0.0000 ± 0.0001 | -0.007 ± 0.005 | +0.005 ± 0.012 | +0.011 ± 0.013 |
-| Multi-gate MoE head (one gate per label) | 1.21M | +0.0002 ± 0.0001 | -0.003 ± 0.002 | +0.003 ± 0.011 | +0.005 ± 0.021 |
-| Label-wise attention head | 0.20M | -0.0001 ± 0.0002 | +0.001 ± 0.001 | +0.003 ± 0.016 | +0.004 ± 0.023 |
+| Head | Head params | Δ ROC-AUC | Δ PR-AUC | Δ Rare-label PR-AUC | Δ Macro-F1 (val-tuned thr.) | Δ Rare-label F1 |
+|---|---|---:|---:|---:|---:|---:|
+| MoE head, BCE | 1.20M | +0.0000 ± 0.0001 | -0.008 ± 0.001 | -0.014 ± 0.002 | +0.002 ± 0.013 | +0.001 ± 0.014 |
+| MLP head, same size as the MoE head | 1.19M | +0.0001 ± 0.0002 | -0.008 ± 0.003 | -0.017 ± 0.006 | +0.002 ± 0.007 | +0.001 ± 0.010 |
+| MoE head, no load balancing | 1.20M | +0.0000 ± 0.0001 | -0.007 ± 0.005 | -0.013 ± 0.009 | +0.005 ± 0.012 | +0.011 ± 0.013 |
+| Multi-gate MoE head (one gate per label) | 1.21M | +0.0002 ± 0.0001 | -0.003 ± 0.002 | -0.006 ± 0.004 | +0.003 ± 0.011 | +0.005 ± 0.021 |
+| Label-wise attention head | 0.20M | -0.0001 ± 0.0002 | +0.001 ± 0.001 | +0.002 ± 0.001 | +0.003 ± 0.016 | +0.004 ± 0.023 |
 
 **Do the labels use different experts?** Mean distance between the expert mixtures of the six labels' positive comments (total variation; 0 = the same experts, 1 = disjoint experts): MoE router 0.13, multi-gate MoE 0.47. For one and the same comment, the multi-gate head's six label gates differ by 0.87 on average; a per-comment router scores 0 by construction.
 
@@ -101,6 +109,32 @@ Trained on 143,613 comments (100% of `train.csv` minus a 15,958-comment validati
 | MoE head | 0.9591 | 0.506 | +0.0046 | +0.0000 ± 0.0001 |
 | Multi-gate MoE head | 0.9600 | 0.518 | +0.0055 | +0.0002 ± 0.0001 |
 | Label-wise attention head | 0.9803 | 0.638 | +0.0258 | -0.0001 ± 0.0002 |
+
+**Longer inputs** (`configs/length.yaml`; linear head + BCE, each minus the 128-token baseline on the same seed; mean ± std over 3 seeds). The baseline sees the first 126 tokens of each comment and takes 7.5 min per run.
+
+| Input | Time / run | Test ROC-AUC | Δ ROC-AUC | Δ PR-AUC | Δ Rare-label PR-AUC | Δ Macro-F1 (val-tuned thr.) | Δ Rare-label F1 |
+|---|---|---|---:|---:|---:|---:|---:|
+| 256 tokens | 7.7 min | 0.9866 ± 0.0001 | +0.0011 ± 0.0002 | +0.005 ± 0.003 | +0.006 ± 0.005 | +0.004 ± 0.007 | +0.012 ± 0.010 |
+| 512 tokens | 8.2 min | 0.9868 ± 0.0000 | +0.0014 ± 0.0002 | +0.006 ± 0.002 | +0.006 ± 0.004 | +0.007 ± 0.009 | +0.010 ± 0.016 |
+| 128 tokens: first 63 + last 63 | 7.5 min | 0.9866 ± 0.0001 | +0.0011 ± 0.0002 | +0.003 ± 0.001 | +0.000 ± 0.001 | +0.000 ± 0.015 | +0.001 ± 0.018 |
+
+Δ test ROC-AUC per seed (42, 43, 44): 256 tokens +0.0011, +0.0013, +0.0009; 512 tokens +0.0012, +0.0016, +0.0013; 128 tokens: first 63 + last 63 +0.0010, +0.0013, +0.0010. Δ validation ROC-AUC (mean over labels): 256 tokens +0.0009 ± 0.0001; 512 tokens +0.0015 ± 0.0001; 128 tokens: first 63 + last 63 +0.0013 ± 0.0001.
+
+Δ test ROC-AUC per label:
+
+| Input | `toxic` | `severe_toxic` | `obscene` | `threat` | `insult` | `identity_hate` |
+|---|---:|---:|---:|---:|---:|---:|
+| 256 tokens | +0.0012 ± 0.0003 | +0.0012 ± 0.0012 | +0.0011 ± 0.0002 | +0.0002 ± 0.0002 | +0.0018 ± 0.0001 | +0.0011 ± 0.0006 |
+| 512 tokens | +0.0015 ± 0.0002 | +0.0015 ± 0.0009 | +0.0015 ± 0.0002 | +0.0004 ± 0.0001 | +0.0021 ± 0.0002 | +0.0012 ± 0.0002 |
+| 128 tokens: first 63 + last 63 | +0.0018 ± 0.0001 | +0.0016 ± 0.0010 | +0.0015 ± 0.0001 | +0.0003 ± 0.0001 | +0.0014 ± 0.0002 | +0.0000 ± 0.0001 |
+
+Δ test PR-AUC per label:
+
+| Input | `toxic` | `severe_toxic` | `obscene` | `threat` | `insult` | `identity_hate` |
+|---|---:|---:|---:|---:|---:|---:|
+| 256 tokens | +0.0039 ± 0.0021 | +0.0039 ± 0.0074 | +0.0035 ± 0.0024 | +0.0073 ± 0.0113 | +0.0070 ± 0.0016 | +0.0073 ± 0.0018 |
+| 512 tokens | +0.0049 ± 0.0005 | -0.0006 ± 0.0082 | +0.0050 ± 0.0022 | +0.0031 ± 0.0046 | +0.0085 ± 0.0030 | +0.0141 ± 0.0078 |
+| 128 tokens: first 63 + last 63 | +0.0070 ± 0.0004 | -0.0044 ± 0.0045 | +0.0056 ± 0.0011 | -0.0050 ± 0.0109 | +0.0068 ± 0.0010 | +0.0083 ± 0.0037 |
 
 **Per label (mean over seeds)**
 
@@ -121,6 +155,11 @@ Trained on 143,613 comments (100% of `train.csv` minus a 15,958-comment validati
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/figures/heads_dark.png">
   <img alt="Follow-up heads minus the BERT + BCE baseline, paired by seed" src="docs/figures/heads_light.png">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/figures/length_dark.png">
+  <img alt="Longer inputs minus the 128-token baseline, paired by seed" src="docs/figures/length_light.png">
 </picture>
 
 <picture>
@@ -150,26 +189,29 @@ Trained on 143,613 comments (100% of `train.csv` minus a 15,958-comment validati
 
 <details><summary>Run details</summary>
 
-| Setting | Seeds | Best epoch per seed | Min / run | Precision | GPU |
-|---|---|---|---:|---|---|
-| `bert_bce` | 42, 43, 44 | 2, 2, 2 | 7.5 | bf16 | NVIDIA A100-SXM4-80GB |
-| `bert_wbce` | 42, 43, 44 | 2, 2, 2 | 7.3 | bf16 | NVIDIA A100-SXM4-80GB |
-| `bert_focal` | 42, 43, 44 | 2, 2, 2 | 7.4 | bf16 | NVIDIA A100-SXM4-80GB |
-| `bert_cbfocal` | 42, 43, 44 | 2, 2, 2 | 7.4 | bf16 | NVIDIA A100-SXM4-80GB |
-| `moe_bce` | 42, 43, 44 | 2, 2, 2 | 8.2 | bf16 | NVIDIA A100-SXM4-80GB |
-| `moe_wbce` | 42, 43, 44 | 2, 2, 2 | 8.2 | bf16 | NVIDIA A100-SXM4-80GB |
-| `moe_focal` | 42, 43, 44 | 2, 2, 2 | 8.2 | bf16 | NVIDIA A100-SXM4-80GB |
-| `moe_cbfocal` | 42, 43, 44 | 2, 2, 2 | 8.2 | bf16 | NVIDIA A100-SXM4-80GB |
-| `mlp_bce` | 42, 43, 44 | 2, 2, 2 | 7.1 | bf16 | NVIDIA A100-SXM4-80GB |
-| `moe_bce_noaux` | 42, 43, 44 | 2, 2, 2 | 7.8 | bf16 | NVIDIA A100-SXM4-80GB |
-| `mmoe_bce` | 42, 43, 44 | 2, 2, 2 | 7.5 | bf16 | NVIDIA A100-SXM4-80GB |
-| `labelattn_bce` | 42, 43, 44 | 2, 2, 2 | 7.2 | bf16 | NVIDIA A100-SXM4-80GB |
-| `probe_linear` | 42 | 3 | 4.1 | bf16 | NVIDIA A100-SXM4-80GB |
-| `probe_linear_mean` | 42 | 3 | 4.1 | bf16 | NVIDIA A100-SXM4-80GB |
-| `probe_mlp` | 42 | 3 | 4.2 | bf16 | NVIDIA A100-SXM4-80GB |
-| `probe_moe` | 42 | 3 | 5.3 | bf16 | NVIDIA A100-SXM4-80GB |
-| `probe_mmoe` | 42 | 3 | 4.8 | bf16 | NVIDIA A100-SXM4-80GB |
-| `probe_labelattn` | 42 | 3 | 4.2 | bf16 | NVIDIA A100-SXM4-80GB |
+| Setting | Seeds | Best epoch per seed | Min / run | Precision | GPU | `transformers` |
+|---|---|---|---:|---|---|---|
+| `bert_bce` | 42, 43, 44 | 2, 2, 2 | 7.5 | bf16 | NVIDIA A100-SXM4-80GB | 5.17.0 |
+| `bert_wbce` | 42, 43, 44 | 2, 2, 2 | 7.3 | bf16 | NVIDIA A100-SXM4-80GB | 5.17.0 |
+| `bert_focal` | 42, 43, 44 | 2, 2, 2 | 7.4 | bf16 | NVIDIA A100-SXM4-80GB | 5.17.0 |
+| `bert_cbfocal` | 42, 43, 44 | 2, 2, 2 | 7.4 | bf16 | NVIDIA A100-SXM4-80GB | 5.17.0 |
+| `moe_bce` | 42, 43, 44 | 2, 2, 2 | 8.2 | bf16 | NVIDIA A100-SXM4-80GB | 5.17.0 |
+| `moe_wbce` | 42, 43, 44 | 2, 2, 2 | 8.2 | bf16 | NVIDIA A100-SXM4-80GB | 5.17.0 |
+| `moe_focal` | 42, 43, 44 | 2, 2, 2 | 8.2 | bf16 | NVIDIA A100-SXM4-80GB | 5.17.0 |
+| `moe_cbfocal` | 42, 43, 44 | 2, 2, 2 | 8.2 | bf16 | NVIDIA A100-SXM4-80GB | 5.17.0 |
+| `mlp_bce` | 42, 43, 44 | 2, 2, 2 | 7.1 | bf16 | NVIDIA A100-SXM4-80GB | 5.17.0 |
+| `moe_bce_noaux` | 42, 43, 44 | 2, 2, 2 | 7.8 | bf16 | NVIDIA A100-SXM4-80GB | 5.17.0 |
+| `mmoe_bce` | 42, 43, 44 | 2, 2, 2 | 7.5 | bf16 | NVIDIA A100-SXM4-80GB | 5.17.0 |
+| `labelattn_bce` | 42, 43, 44 | 2, 2, 2 | 7.2 | bf16 | NVIDIA A100-SXM4-80GB | 5.17.0 |
+| `probe_linear` | 42 | 3 | 4.1 | bf16 | NVIDIA A100-SXM4-80GB | 5.17.0 |
+| `probe_linear_mean` | 42 | 3 | 4.1 | bf16 | NVIDIA A100-SXM4-80GB | 5.17.0 |
+| `probe_mlp` | 42 | 3 | 4.2 | bf16 | NVIDIA A100-SXM4-80GB | 5.17.0 |
+| `probe_moe` | 42 | 3 | 5.3 | bf16 | NVIDIA A100-SXM4-80GB | 5.17.0 |
+| `probe_mmoe` | 42 | 3 | 4.8 | bf16 | NVIDIA A100-SXM4-80GB | 5.17.0 |
+| `probe_labelattn` | 42 | 3 | 4.2 | bf16 | NVIDIA A100-SXM4-80GB | 5.17.0 |
+| `bert_bce_len256` | 42, 43, 44 | 2, 2, 2 | 7.7 | bf16 | NVIDIA A100-SXM4-80GB | 5.18.0 |
+| `bert_bce_len512` | 42, 43, 44 | 2, 2, 2 | 8.2 | bf16 | NVIDIA A100-SXM4-80GB | 5.18.0 |
+| `bert_bce_headtail` | 42, 43, 44 | 2, 2, 2 | 7.5 | bf16 | NVIDIA A100-SXM4-80GB | 5.18.0 |
 
 </details>
 <!-- RESULTS:END -->
@@ -215,10 +257,20 @@ The follow-up heads ([`configs/heads.yaml`](configs/heads.yaml), results in the 
 | `mlp_bce` | One MLP with the MoE head's parameter count, no routing | Is it the capacity or the routing? | Neither helps; the MLP scores like the MoE. |
 | `moe_bce_noaux` | MoE head without the load-balancing loss | Does balancing force a bad split? | No. Without it, one expert takes 96–100% of comments and nothing changes. |
 
-**Next steps:** inputs longer than 128 tokens (`toxic` ROC-AUC is 0.957 on the 19% of test
-comments that get cut, vs 0.974 on the rest; [`configs/length.yaml`](configs/length.yaml) tests 256
-and 512 tokens and head + tail truncation, set up but not yet run); an audit of the 730 test
-comments labelled clean that the models confidently score as toxic; ensembles; a stronger encoder
+## What did help
+
+The diagnosis pointed at the input rather than the head: the baseline's `toxic` ROC-AUC is 0.957
+on the 19% of test comments cut at 128 tokens, vs 0.974 on the rest.
+[`configs/length.yaml`](configs/length.yaml) keeps the linear head and BCE and changes only what
+BERT reads (results in the tables above). 512 tokens helps every label, most of all `insult`
+(+0.0021 ROC-AUC). 256 tokens gets about 80% of that gain. The first 63 + last 63 tokens match
+the first 254 on ROC-AUC, so the end of a long comment says more than its middle. Section 7 of
+[`docs/diagnosis.md`](docs/diagnosis.md#7-longer-inputs-the-first-change-that-helps) compares
+this with expectations written before the runs.
+
+**Next steps:** the same-environment control for the longer-input runs and their breakdown into
+short and long comments (both queued); an audit of the 730 test comments labelled clean that the
+models confidently score as toxic; ensembles of 512-token models; a stronger encoder
 ([`configs/encoders.yaml`](configs/encoders.yaml): DeBERTa-v3-base, set up but not yet run); and
 MoE layers inside the encoder, routed per token.
 
@@ -294,7 +346,8 @@ Engineering details:
 * **NaN guard:** a NaN/inf loss or gradient is never applied, and a run that keeps producing
   them stops after 20 bad steps instead of silently training on garbage.
 * **Length-grouped batching with dynamic padding.** Most comments are far shorter than 128
-  tokens, so this roughly halves the compute.
+  tokens, so this roughly halves the compute. It also keeps long inputs cheap: only the long
+  comments get longer, so 512 tokens costs under 10% more time per run than 128.
 * **Cached tokenisation.**
 * **Resumable runs.** A finished run is skipped, so a Colab disconnect costs at most one run.
   Runs are ordered seed-major, so a partly finished study is still a complete single-seed ablation.
@@ -324,7 +377,7 @@ python scripts/run_ablation.py                                   # main study ->
 python scripts/run_ablation.py --config configs/encoders.yaml    # optional DeBERTa-v3 study
 python scripts/run_ablation.py --config configs/heads.yaml       # follow-up heads (docs/diagnosis.md)
 python scripts/run_ablation.py --config configs/probes.yaml      # the same heads on a frozen encoder
-python scripts/run_ablation.py --config configs/length.yaml      # longer inputs: 256 / 512 tokens, head + tail
+python scripts/run_ablation.py --config configs/length.yaml      # longer inputs: 256 / 512 tokens, head + tail, control
 python scripts/make_report.py --update-readme
 python scripts/diagnose.py --data data                           # diagnostics (CPU) -> results/diagnosis.md
 ```

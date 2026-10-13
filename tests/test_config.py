@@ -110,11 +110,17 @@ def test_load_config_from_yaml(tmp_path):
 
 def test_length_study_parses():
     runs = load_ablation(ROOT / "configs" / "length.yaml")
-    assert len(runs) == 9 and {r.study for r in runs} == {"length"}
+    assert len(runs) == 12 and {r.study for r in runs} == {"length"}
     assert {(r.arch, r.loss) for r in runs} == {("bert", "bce")}
     assert {(r.group, r.max_length, r.truncation) for r in runs} == {
         ("bert_bce_len256", 256, "head"),
         ("bert_bce_len512", 512, "head"),
         ("bert_bce_headtail", 128, "head_tail"),
+        ("bert_bce_len128", 128, "head"),  # control: the baseline re-run
     }
-    assert [r.name for r in runs[:3]] == ["bert_bce_len256_s42", "bert_bce_len512_s42", "bert_bce_headtail_s42"]
+    assert [r.name for r in runs[:4]] == [
+        "bert_bce_len256_s42",
+        "bert_bce_len512_s42",
+        "bert_bce_headtail_s42",
+        "bert_bce_len128_s42",
+    ]

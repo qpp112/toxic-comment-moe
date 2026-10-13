@@ -151,8 +151,17 @@ def test_length_study_section_and_figure(tmp_path):
     md = report.summary_markdown(settings, "docs/figures", tmp_path / "figs")
     section = md.split("**Longer inputs**")[1]
     assert "| 256 tokens |" in section and "| head+tail |" in section and "Δ test ROC-AUC per label" in section
+    assert "Δ test PR-AUC per label" in section and "Δ test ROC-AUC per seed (42, 43): " in section
+    assert "Δ Rare-label PR-AUC" in section and "Δ validation ROC-AUC" in section
     assert (
         "**Loss × head ablation" in md.split("**Longer inputs**")[0]
     )  # the 128-token baseline stays in the main table
     stems = {p.stem.rsplit("_", 1)[0] for p in report.make_figures(settings, tmp_path / "figs")}
     assert "length" in stems
+
+
+def test_rounded_zero_has_no_minus_sign():
+    report = _load_report_module()
+    assert report._signed(-0.0004, 0.0013, 3, 3) == "+0.000 ± 0.001"
+    assert report._signed(-0.0006, 0.0013, 3, 3) == "-0.001 ± 0.001"
+    assert report._signed(0.0123, 0.0, 1, 3) == "+0.012"

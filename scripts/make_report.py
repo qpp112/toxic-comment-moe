@@ -67,6 +67,11 @@ METRICS: Dict[str, Tuple[str, Metric, int]] = {
         lambda r: float(np.mean([r["test"]["f1@tuned"]["per_label"][LABELS.index(k)] for k in RARE])),
         3,
     ),
+    "rare_pr": (
+        "Rare-label PR-AUC¹",
+        lambda r: float(np.mean([r["test"]["pr_auc"][LABELS.index(k)] for k in RARE])),
+        3,
+    ),
 }
 
 
@@ -160,6 +165,11 @@ class Setting:
         return len(self.runs)
 
     @property
+    def minutes(self) -> float:
+        """Mean wall-clock minutes per run (the first run of a new input length also tokenizes the data)."""
+        return float(np.nanmean([r.get("wall_clock_minutes", np.nan) for r in self.runs]))
+
+    @property
     def label(self) -> str:
         enc = ENCODER_NAMES.get(self.encoder, self.encoder)
         return f"{enc} + {HEAD_NAMES.get(self.arch, self.arch)}, {LOSS_NAMES.get(self.loss, self.loss)}"
@@ -192,6 +202,8 @@ def sort_key(s: Setting):
         s.encoder,
         HEAD_ORDER.index(s.arch) if s.arch in HEAD_ORDER else 99,
         LOSS_ORDER.index(s.loss) if s.loss in LOSS_ORDER else 99,
+        s.first.get("truncation", "head") != "head",  # input settings: longer windows first, then head + tail
+        s.first.get("max_length") or 0,
         s.name,
     )
 
@@ -262,13 +274,19 @@ def delta_lines(a: Setting, b: Setting) -> List[str]:
     return [f"**{b.label}** vs **{a.label}** ({seeds}): " + "; ".join(out) + "."]
 
 
-DELTA_KEYS = ["roc", "pr", "f1", "rare"]
+DELTA_KEYS = ["roc", "pr", "rare_pr", "f1", "rare"]
+
+
+def _signed(m: float, sd: float, n: int, digits: int) -> str:
+    """``+0.012 ± 0.003``; a mean that rounds to zero is shown as +0.000, never -0.000."""
+    m = 0.0 if round(m, digits) == 0 else m
+    return f"{m:+.{digits}f} ± {sd:.{digits}f}" if n > 1 else f"{m:+.{digits}f}"
 
 
 def _delta_cell(base: Setting, s: Setting, key: str) -> str:
     _, fn, digits = METRICS[key]
     m, sd, n = paired_delta(base, s, fn)
-    return "–" if not n else (f"{m:+.{digits}f} ± {sd:.{digits}f}" if n > 1 else f"{m:+.{digits}f}")
+    return "–" if not n else _signed(m, sd, n, digits)
 
 
 def paired_table(
@@ -418,7 +436,16 @@ def length_runs(settings: Dict[str, Setting]) -> List[Setting]:
     runs = [s for s in settings.values() if s.study == "length"]
     return sorted(
         runs, key=lambda s: (s.first.get("truncation", "head") != "head", s.first.get("max_length", 0), s.name)
-    )
+    )  # the 128-token re-run (control) comes first
+
+
+def _delta4(base: Setting, s: Setting, fn: Metric) -> str:
+    m, sd, k = paired_delta(base, s, fn)
+    return "–" if not k else _signed(m, sd, k, 4)
+
+
+def _val_roc(r: dict) -> float:
+    return float(np.mean(r["val"]["roc_auc"])) if "val" in r else float("nan")
 
 
 def length_section(settings: Dict[str, Setting]) -> List[str]:
@@ -428,46 +455,60 @@ def length_section(settings: Dict[str, Setting]) -> List[str]:
     if base is None or not runs:
         return []
     n = base.n
-    label_rows = [
-        "| Input | " + " | ".join(f"`{lab}`" for lab in LABELS) + " |",
-        "|---|" + "---:|" * len(LABELS),
-    ]
-    for s in runs:
-        cells = []
-        for j in range(len(LABELS)):
-            m, sd, k = paired_delta(base, s, per_label("roc_auc", j))
-            cells.append("–" if not k else (f"{m:+.4f} ± {sd:.4f}" if k > 1 else f"{m:+.4f}"))
-        label_rows.append(f"| {s.title} | " + " | ".join(cells) + " |")
+
+    def label_table(key: str) -> str:
+        rows = ["| Input | " + " | ".join(f"`{lab}`" for lab in LABELS) + " |", "|---|" + "---:|" * len(LABELS)]
+        for s in runs:
+            cells = [_delta4(base, s, per_label(key, j)) for j in range(len(LABELS))]
+            rows.append(f"| {s.title} | " + " | ".join(cells) + " |")
+        return "\n".join(rows)
+
+    window = (base.first.get("max_length") or 128) - 2  # [CLS] and [SEP] take two of the 128 positions
+    val = "; ".join(f"{s.title} {_delta4(base, s, _val_roc)}" for s in runs)
+    roc = METRICS["roc"][1]
+    base_roc = {r.get("seed"): roc(r) for r in base.runs}
+    per_seed = "; ".join(
+        f"{s.title} "
+        + ", ".join(f"{roc(r) - base_roc[r.get('seed')]:+.4f}" for r in s.runs if r.get("seed") in base_roc)
+        for s in runs
+    )
     return [
         "",
         "**Longer inputs** (`configs/length.yaml`; linear head + BCE, each minus the 128-token baseline on the same "
-        f"seed; {'mean ± std over ' + str(n) + ' seeds' if n > 1 else 'one seed'}). The baseline sees the first 126 "
-        "tokens of each comment.",
+        f"seed; {'mean ± std over ' + str(n) + ' seeds' if n > 1 else 'one seed'}). The baseline sees the first "
+        f"{window} tokens of each comment and takes {_fmt(base.minutes, 1)} min per run.",
         "",
         paired_table(
             base,
             runs,
-            lambda s: [s.title, f"{s.first.get('wall_clock_minutes', float('nan')):.0f} min"],
-            ["Input", "Time / run"],
-        ),  # fmt: skip
+            lambda s: [s.title, f"{_fmt(s.minutes, 1)} min", _cell(s, METRICS["roc"][1], 4)],
+            ["Input", "Time / run", "Test ROC-AUC"],
+        ),
+        "",
+        f"Δ test ROC-AUC per seed ({', '.join(str(x) for x in base.seeds)}): {per_seed}. "
+        f"Δ validation ROC-AUC (mean over labels): {val}.",
         "",
         "Δ test ROC-AUC per label:",
         "",
-        "\n".join(label_rows),
+        label_table("roc_auc"),
+        "",
+        "Δ test PR-AUC per label:",
+        "",
+        label_table("pr_auc"),
     ]
 
 
 def details_table(settings: List[Setting]) -> str:
     lines = [
-        "| Setting | Seeds | Best epoch per seed | Min / run | Precision | GPU |",
-        "|---|---|---|---:|---|---|",
+        "| Setting | Seeds | Best epoch per seed | Min / run | Precision | GPU | `transformers` |",
+        "|---|---|---|---:|---|---|---|",
     ]
     for s in settings:
         env = s.first.get("environment", {})
-        mins = np.mean([r.get("wall_clock_minutes", np.nan) for r in s.runs])
         lines.append(
             f"| `{s.name}` | {', '.join(str(x) for x in s.seeds)} | {', '.join(str(r.get('best_epoch', '–')) for r in s.runs)} "
-            f"| {_fmt(float(mins), 1)} | {env.get('precision', '–')} | {env.get('gpu', env.get('device', '–'))} |"
+            f"| {_fmt(s.minutes, 1)} | {env.get('precision', '–')} | {env.get('gpu', env.get('device', '–'))} "
+            f"| {env.get('transformers', '–')} |"
         )
     return "\n".join(lines)
 
@@ -516,7 +557,7 @@ def summary_markdown(settings: Dict[str, Setting], figure_prefix: str, figure_di
             "",
             metric_table(main, lambda s: [HEAD_TITLES[s.arch], LOSS_NAMES.get(s.loss, s.loss)], ["Head", "Loss"]),
             "",
-            "¹ Mean test F1 over the three rarest labels: `severe_toxic`, `threat`, `identity_hate`.",
+            "¹ Mean over the three rarest labels: `severe_toxic`, `threat`, `identity_hate`.",
         ]
     parts += heads_section(settings)
     parts += probes_section(settings)

@@ -9,11 +9,14 @@
 #   bert_bce_headtail  still 128 tokens, but the first 63 + last 63 instead of the first 126:
 #                      same compute as the baseline; tests whether the end of a long comment
 #                      matters more than its middle (Sun et al., 2019)
+#   bert_bce_len128    control: the 128-token baseline itself, re-run in the same environment
+#                      as the runs above (the first length runs used transformers 5.18, the
+#                      main study 5.17). Its difference from bert_bce should be ~0.
 #
 # Same seeds and data split as the main study, so every run is paired by seed with bert_bce.
-# Batches are padded per batch, so only long comments cost more: expect roughly 1.3x (256)
-# and 1.5-2x (512) the baseline's time per run. 512 tokens at batch size 32 needs an A100 or
-# L4; on a 16 GB GPU add  --set batch_size=16 grad_accum_steps=2
+# Batches are padded per batch, so only long comments cost more: on an A100 a run took 7.7 min
+# (256) and 8.2 min (512) vs 7.5 min for the baseline. 512 tokens at batch size 32 needs an
+# A100 or L4; on a 16 GB GPU add  --set batch_size=16 grad_accum_steps=2
 base: base.yaml
 seeds: [42, 43, 44]
 common: {study: length, arch: bert, loss: bce}
@@ -21,3 +24,4 @@ runs:
   - {name: bert_bce_len256,   max_length: 256, title: "256 tokens"}
   - {name: bert_bce_len512,   max_length: 512, title: "512 tokens", eval_batch_size: 128}
   - {name: bert_bce_headtail, max_length: 128, truncation: head_tail, title: "128 tokens: first 63 + last 63"}
+  - {name: bert_bce_len128,   max_length: 128, title: "128 tokens (baseline re-run, control)"}

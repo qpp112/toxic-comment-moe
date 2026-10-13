@@ -3,7 +3,8 @@
 The 24-run study ([README](../README.md#results)) found that a Mixture-of-Experts head on BERT
 ties with a plain linear head. This page works out why from the saved runs. It then tests that
 explanation with 18 more runs: four new heads × 3 seeds, including two built specifically to get
-around the MoE's problem, plus six heads trained on a frozen encoder.
+around the MoE's problem, plus six heads trained on a frozen encoder. Section 7 tests where the
+diagnosis did find headroom, the input length (9 more runs).
 
 Every number here comes from [`scripts/diagnose.py`](../scripts/diagnose.py) or
 [`scripts/make_report.py`](../scripts/make_report.py). Their full output is in
@@ -30,7 +31,9 @@ the linear-head baseline `bert_bce`: same loss, same seeds, same data.
 
 Averaging three seeds of the plain linear head gains more (+0.008 PR-AUC) than any head
 achieved. The remaining errors are concentrated in long comments and in what is probably label
-noise ([section 6](#6-where-the-remaining-errors-are)).
+noise ([section 6](#6-where-the-remaining-errors-are)). Letting BERT read 512 tokens instead of
+128 is the first change that helps: +0.0014 ROC-AUC, more than any head, loss or seed ensemble
+([section 7](#7-longer-inputs-the-first-change-that-helps)).
 
 ## 1. What the router learned
 
@@ -142,7 +145,7 @@ the same heads on a frozen encoder ([`configs/probes.yaml`](../configs/probes.ya
 | Question | Run | Result (paired vs linear head, 3 seeds) | Answer |
 |---|---|---|---|
 | Can the labels use different experts if each has its own gate? | `mmoe_bce` | They do: the six labels' routing is 0.47 apart (MoE router: 0.13), and the gates of one comment differ by 0.87. Scores: ROC-AUC +0.0002 ± 0.0001, PR-AUC −0.003 ± 0.002. | The specialisation happens and does not help. |
-| Does each label need its own view of the words? | `labelattn_bce` | ROC-AUC −0.0001 ± 0.0002, PR-AUC +0.001 ± 0.001, rare-label PR-AUC +0.002 ± 0.002, with a sixth of the MoE head's parameters. | Not once BERT is fine-tuned: the [CLS] vector already carries it. |
+| Does each label need its own view of the words? | `labelattn_bce` | ROC-AUC −0.0001 ± 0.0002, PR-AUC +0.001 ± 0.001, rare-label PR-AUC +0.002 ± 0.001, with a sixth of the MoE head's parameters. | Not once BERT is fine-tuned: the [CLS] vector already carries it. |
 | Is the head's size what matters? | `mlp_bce` | ROC-AUC +0.0001 ± 0.0002, PR-AUC −0.008 ± 0.003, rare-label PR-AUC −0.017 ± 0.006. The MoE: +0.0000 ± 0.0001, −0.008 ± 0.001, −0.014 ± 0.002. | The MoE behaves like an MLP of its size. Its rare-label loss comes from the extra hidden layer, not the routing. |
 | Does load balancing hurt? | `moe_bce_noaux` | The router collapses: one expert takes 96–100% of comments in every seed. ROC-AUC +0.0000 ± 0.0001, PR-AUC −0.007 ± 0.005. | No. It makes no difference. |
 | Does the head matter once the encoder is fine-tuned? | frozen-encoder probes | Frozen: label attention 0.980 ROC-AUC vs 0.955 for the linear head (+0.026, PR-AUC 0.638 vs 0.492); the other heads +0.005 to +0.007. Fine-tuned: all within ±0.0002. | No. Fine-tuning absorbs what the head could add. |
@@ -161,9 +164,9 @@ the same heads on a frozen encoder ([`configs/probes.yaml`](../configs/probes.ya
 tie with the linear head after fine-tuning, with clear differences only in the frozen probes.
 That held. I expected the label-attention head to be the most likely to help on the rare labels.
 It is the best of the five fine-tuned heads, and the only one that does not lose rare-label
-PR-AUC, but the gain (+0.002 ± 0.002) is within noise. With a fine-tuned encoder, this task
-leaves no room for a better head. The next gains have to come from the input, the encoder or the
-data.
+PR-AUC, but the gain (+0.002 ± 0.001, about 1.5 standard deviations over 3 seeds) is too small to
+call. With a fine-tuned encoder, this task leaves no room for a better head. The next gains have
+to come from the input, the encoder or the data. Section 7 tests the first of these.
 
 ## 5. What the test labels add
 
@@ -182,28 +185,81 @@ data.
 * **Long comments.** 19% of test comments are longer than the 128-token input window, so the
   model never sees their end. On them, ROC-AUC drops for the frequent labels: `toxic` 0.957 vs
   0.974 on short comments, `obscene` 0.966 vs 0.982, `insult` 0.968 vs 0.981. The rare labels
-  are barely affected.
+  are barely affected. Section 7 tests longer inputs.
 * **Probable label noise.** Averaged over all 36 fine-tuned runs, 730 test comments labelled
   clean get p(`toxic`) ≥ 0.9, while only 34 of the 6,090 comments labelled toxic get ≤ 0.05.
-* **For scale:** this single BERT-base scores 0.9855.
+* **For scale:** this single BERT-base scores 0.9855 (0.9868 with 512-token inputs, section 7).
   [Detoxify](https://huggingface.co/unitary/toxic-bert)'s BERT-base model reports 0.98636, and the
   top Kaggle leaderboard score was 0.98856.
 
+## 7. Longer inputs: the first change that helps
+
+Section 6 points at the input rather than the head. [`configs/length.yaml`](../configs/length.yaml)
+therefore keeps the linear head and BCE and changes only what BERT reads. With [CLS] and [SEP], a
+128-token input holds the first 126 tokens of a comment. The alternatives are 256 tokens, 512
+tokens (BERT's maximum), and 128 tokens made of the first 63 and the last 63 tokens ("head +
+tail", [Sun et al., 2019](https://arxiv.org/abs/1905.05583)). Each has 3 seeds, paired with the
+baseline's:
+
+| Input | Time / run (A100) | Test ROC-AUC | Δ ROC-AUC | Δ PR-AUC |
+|---|---:|---:|---:|---:|
+| 128 tokens: first 126 (baseline) | 7.5 min | 0.9855 | – | – |
+| 256 tokens: first 254 | 7.7 min | 0.9866 | +0.0011 ± 0.0002 | +0.005 ± 0.003 |
+| 512 tokens: first 510 | 8.2 min | 0.9868 | +0.0014 ± 0.0002 | +0.006 ± 0.002 |
+| 128 tokens: first 63 + last 63 | 7.5 min | 0.9866 | +0.0011 ± 0.0002 | +0.003 ± 0.001 |
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="figures/length_dark.png">
+  <img alt="Longer inputs minus the 128-token baseline, paired by seed" src="figures/length_light.png">
+</picture>
+
+* **Every seed improves.** All nine paired ROC-AUC differences lie between +0.0009 and +0.0016,
+  and validation ROC-AUC moves the same way (+0.0009, +0.0015 and +0.0013 for 256 tokens, 512
+  tokens and head + tail). For comparison, no head or loss in this repository raised ROC-AUC by
+  more than 0.0003, and averaging three seeds of the baseline raised it by 0.0004 (section 5).
+* **Most of the gain is cheap.** 256 tokens gets about 80% of the 512-token gain. Head + tail
+  gets as much ROC-AUC as 256 tokens while reading no more than the baseline. Comments of similar
+  length are batched together and padded only to the longest in their batch, so 512 tokens costs
+  under 10% more time than 128.
+* **Every label gains, `insult` the most.** Δ ROC-AUC at 512 tokens: `insult` +0.0021, `toxic`
+  +0.0015, `obscene` +0.0015, `severe_toxic` +0.0015 (noisy: ± 0.0009), `identity_hate` +0.0012,
+  `threat` +0.0004.
+* **Head + tail helps the frequent labels as much as 512 tokens, the rare ones less.** On
+  `toxic`, `obscene` and `insult` it gains as much PR-AUC as 512 tokens (+0.0070, +0.0056 and
+  +0.0068, vs +0.0049, +0.0050 and +0.0085). Averaged over the three rare labels it gains nothing
+  (+0.000 ± 0.001, vs +0.006 ± 0.004 with 512 tokens), and `identity_hate` ROC-AUC does not move.
+  Rare-label PR-AUC is noisy, though; the per-label tables are in the
+  [README](../README.md#results).
+* **For scale:** at 0.9868, one BERT-base reading 512 tokens is slightly above the 0.98636 that
+  Detoxify reports for its BERT-base model, and 0.0018 below the top Kaggle score.
+
+**My expectations, written on this page before the runs (see its git history), and how they held
+up:**
+
+| Expectation | Result |
+|---|---|
+| 512 tokens raises `toxic`, `obscene` and `insult` ROC-AUC on long comments, without closing the gap to short comments. | The three labels gain +0.0015, +0.0015 and +0.0021 overall. The split into short and long comments is still to come. |
+| That adds only a few ten-thousandths to the overall mean, because 81% of comments are unaffected. | Wrong: +0.0014, several times more. |
+| 256 tokens gets most of that gain. | Held: about 80%. |
+| Head + tail helps only if the end of a long comment matters more than its middle. | It gained as much ROC-AUC as 256 tokens, so the end does matter more. |
+| The rare labels do not change. | Wrong for `identity_hate` (+0.0012 ± 0.0002 at 512 tokens) and probably for `severe_toxic` (+0.0012 to +0.0016 in all three settings, each ± 0.0009–0.0012). Right for `threat` (+0.0002 to +0.0004). In hindsight, `severe_toxic` has the most long comments of any label: 23% of its positives, against 8% for `toxic`. |
+
+**A caveat: the software version.** The baseline was trained with `transformers` 5.17 and these
+runs with 5.18, on the same GPU type with the same PyTorch version and seeds. Two checks are
+queued to rule the update out as the cause. `configs/length.yaml` now also re-trains the
+128-token baseline in the new environment (`bert_bce_len128`), and `scripts/diagnose.py` compares
+the cached token ids of all runs, which shows whether tokenization changed. The split into short
+and long comments is a third check: on comments that fit in 128 tokens, every setting is given
+exactly the same input, so a gain that comes from reading more should come mostly from the long
+comments. Until these are in, read the gains as very likely but not final.
+
 ## What I'd try next
 
-* **Longer inputs**, the clearest headroom: the frequent labels lose accuracy on the 19% of
-  comments cut at 128 tokens. [`configs/length.yaml`](../configs/length.yaml) is set up and not yet
-  run. It keeps the linear head + BCE and changes only the input: 256 tokens, 512 tokens, and the
-  first 63 + last 63 tokens at the baseline's cost (head + tail truncation, Sun et al., 2019).
-  The diagnostics then compare each one on short and long comments.
-  *Expectations, written before running:* 512 tokens raises `toxic`, `obscene` and `insult` ROC-AUC
-  on long comments without closing the gap to short comments, since long comments are also harder
-  to judge. That adds only a few ten-thousandths to the overall mean, because 81% of comments are
-  unaffected. 256 tokens gets most of that gain. Head + tail helps only if the end of a long
-  comment matters more than its middle. The rare labels do not change.
+* **Finish the input-length checks** (section 7): the same-environment control and the split
+  into short and long comments.
 * **A look at the 730 confident disagreements** (`diagnose.py --show-examples`), to measure how
   much of the remaining error is label noise.
-* **Ensembles** of seeds or encoders: the only thing here that beat the single baseline.
+* **Ensembles of 512-token models.** At 128 tokens, averaging three seeds added +0.008 PR-AUC.
 * **MoE where it is usually used:** experts inside the encoder's feed-forward layers, routed per
   token and initialised from BERT's own weights ("sparse upcycling",
   [Komatsuzaki et al., 2023](https://arxiv.org/abs/2212.05055)).

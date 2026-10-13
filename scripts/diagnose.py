@@ -38,7 +38,7 @@ from toxic_moe.metrics import mean_pairwise_tv  # noqa: E402
 
 BASELINE, MOE = "bert_bce", "moe_bce"
 FOLLOW_UP = ["mlp_bce", "moe_bce_noaux", "mmoe_bce", "labelattn_bce"]
-LENGTH = ["bert_bce_len256", "bert_bce_len512", "bert_bce_headtail"]  # configs/length.yaml
+LENGTH = ["bert_bce_len128", "bert_bce_len256", "bert_bce_len512", "bert_bce_headtail"]  # configs/length.yaml
 NAMES = {
     "bert_bce": "Linear",
     "moe_bce": "MoE",
@@ -47,6 +47,7 @@ NAMES = {
     "moe_bce_noaux": "MoE, no balancing",
     "mmoe_bce": "Multi-gate MoE",
     "labelattn_bce": "Label attention",
+    "bert_bce_len128": "Linear, 128 tokens (re-run)",
     "bert_bce_len256": "Linear, 256 tokens",
     "bert_bce_len512": "Linear, 512 tokens",
     "bert_bce_headtail": "Linear, first + last 63 tokens",
@@ -632,15 +633,171 @@ def length_effect(groups: Dict[str, List[Run]], lab: Labels) -> Tuple[str, dict]
             + [f"{out['auc'][group][k]['short']:.4f} / {out['auc'][group][k]['long']:.4f}" for k in LABELS]
         )
     pos_long = [f"`{k}` {long[y[:, j] == 1].mean():.1%}" for j, k in enumerate(LABELS)]
+    out["share_longer_than"] = {n: float((lengths > n).mean()) for n in (256, 512)}
+    md = [
+        "## Long comments",
+        "",
+        f"{long.mean():.1%} of test comments are longer than the {cfg_len}-token input window ({unit}); the "
+        f"model never sees anything after the first {cfg_len} tokens. Longer than 256 tokens: "
+        f"{out['share_longer_than'][256]:.1%}; longer than 512: {out['share_longer_than'][512]:.1%}. Share of each "
+        "label's positives that are long: " + ", ".join(pos_long) + ". ROC-AUC on short / long comments "
+        "(seed-averaged predictions):",
+        "",
+        table(["Head", *[f"`{k}`" for k in LABELS]], rows),
+    ]
+    paired, out["length_runs"] = length_gain(groups, y, long)
+    if paired:
+        md += ["", *paired]
+    return "\n".join(md), out
+
+
+def length_gain(groups: Dict[str, List[Run]], y: np.ndarray, long: np.ndarray) -> Tuple[List[str], dict]:
+    """Longer-input runs minus the baseline, paired by seed, on short and on long comments separately.
+
+    On short comments every setting is given exactly the baseline's tokens at test time, so a
+    difference there comes from training (longer training inputs, run-to-run noise, software
+    version), not from reading more of the comment.
+    """
+    base = {r.seed: r for r in with_predictions(groups.get(BASELINE, []))}
+    out: Dict[str, Any] = {}
+    rows, label_rows = [], []
+    for group in LENGTH:
+        runs = [r for r in with_predictions(groups.get(group, [])) if r.seed in base]
+        if not runs:
+            continue
+        deltas: Dict[str, List[float]] = {"all": [], "short": [], "long": []}
+        per_label = []
+        for r in runs:
+            pa, pb = base[r.seed].preds()["test_probs"], r.preds()["test_probs"]
+            for part, mask in (("all", np.ones_like(long)), ("short", ~long), ("long", long)):
+                d = [roc(y[mask, j], pb[mask, j]) - roc(y[mask, j], pa[mask, j]) for j in range(len(LABELS))]
+                deltas[part].append(float(np.nanmean(d)))
+                if part == "long":
+                    per_label.append(d)
+        out[group] = {
+            "seeds": [r.seed for r in runs],
+            **{f"d_roc_{part}": v for part, v in deltas.items()},
+            "d_roc_long_per_label": {k: [v[j] for v in per_label] for j, k in enumerate(LABELS)},
+        }
+        rows.append([name(group), len(runs), *(pm(deltas[p], 4, signed=True) for p in ("all", "short", "long"))])
+        label_rows.append([name(group), *(pm([v[j] for v in per_label], 4, signed=True) for j in range(len(LABELS)))])
+    if not rows:
+        return [], {}
+    md = [
+        "Longer inputs minus the 128-token baseline, paired by seed (Δ ROC-AUC, mean over labels). On short comments "
+        "every setting is given exactly the baseline's input, so a difference there comes from training (longer "
+        "training inputs, run-to-run noise, software version), not from reading more of the comment:",
+        "",
+        table(["Input", "Seeds", "All comments", "Short comments", "Long comments"], rows),
+        "",
+        "Δ ROC-AUC on long comments, per label:",
+        "",
+        table(["Input", *[f"`{k}`" for k in LABELS]], label_rows),
+    ]
+    return md, out
+
+
+def _cached_tokens(cache_dir: Path, encoder: str) -> Dict[Tuple[str, str, int], List[np.ndarray]]:
+    """The token-id caches that training wrote (batching.encode_texts), keyed by (split, truncation, length).
+
+    Several files can share a key when runs used different subsets of the data (smoke tests);
+    the one with the most comments is the full data set.
+    """
+    safe = encoder.replace("/", "_").replace("\\", "_")  # as in batching._cache_file
+    pattern = re.compile(rf"^(train|test)(-headtail)?_{re.escape(safe)}_(\d+)_[0-9a-f]+$")
+    best: Dict[Tuple[str, str, int], Tuple[int, Path]] = {}
+    for path in sorted(cache_dir.glob("*.npz")):
+        m = pattern.match(path.stem)
+        if not m:
+            continue  # other encoders, or a half-written ".partial" file
+        key = (m.group(1), "head_tail" if m.group(2) else "head", int(m.group(3)))
+        with np.load(path) as z:
+            count = len(z["offsets"]) - 1
+        if key not in best or count > best[key][0]:
+            best[key] = (count, path)
+    caches = {}
+    for key, (_, path) in best.items():
+        with np.load(path) as z:
+            flat, offsets = z["flat"], z["offsets"]
+        caches[key] = [flat[offsets[i] : offsets[i + 1]] for i in range(len(offsets) - 1)]
+    return caches
+
+
+def check_tokens(
+    base: List[np.ndarray],
+    other: List[np.ndarray],
+    window: int,
+    mode: str = "head",
+    full: Optional[List[np.ndarray]] = None,
+    full_window: int = 0,
+) -> Dict[str, int]:
+    """Count comments whose tokens in ``other`` differ from the baseline's where the two inputs overlap.
+
+    ``base`` holds the baseline's ids ([CLS] + the first ``window - 2`` tokens + [SEP]; one special
+    token at each end, as in BERT). A comment that fits in ``window`` must be identical in ``other``.
+    For a longer comment, ``head`` (a longer window) must start with the baseline's tokens, and
+    ``head_tail`` (same window) must keep the baseline's first half and end with the comment's last
+    tokens. The tail is checked against ``full``, a longer-window cache, for comments that fit in it.
+    """
+    bad = tails = 0
+    half = 1 + (window - 2) // 2  # [CLS] + the first half of the body
+    for i, (a, b) in enumerate(zip(base, other)):
+        if a.size < window:  # the whole comment fits in the baseline's window
+            ok = np.array_equal(a, b)
+        elif mode == "head":
+            ok = b.size >= window and b[-1] == a[-1] and np.array_equal(a[:-1], b[: window - 1])
+        else:
+            ok = b.size == window and b[-1] == a[-1] and np.array_equal(a[:half], b[:half])
+            f = None if full is None else full[i]
+            if ok and f is not None and window < f.size < full_window:  # the whole comment is in ``full``
+                tails += 1
+                ok = np.array_equal(b[half:-1], f[f.size - (window - half) : -1])
+        bad += not ok
+    return {"comments": len(base), "mismatches": int(bad), "tails_checked": tails}
+
+
+def token_check(data_dir: Path, encoder: str = "bert-base-uncased", window: int = 128) -> Tuple[str, dict]:
+    """Do the longer-input runs see the baseline's tokens wherever their inputs overlap?
+
+    Reads the token caches that training wrote to ``<data>/cache``. They were written at different
+    times, possibly by different ``transformers`` releases, so agreement also rules out a tokenizer
+    change between the runs.
+    """
+    cache_dir = data_dir / "cache"
+    caches = _cached_tokens(cache_dir, encoder) if cache_dir.is_dir() else {}
+    out: Dict[str, Any] = {}
+    rows = []
+    for split in ("train", "test"):
+        base = caches.get((split, "head", window))
+        if base is None:
+            continue
+        longest = max((n for (s, t, n) in caches if s == split and t == "head" and n > window), default=0)
+        for (s, mode, n), other in sorted(caches.items()):
+            if s != split or len(other) != len(base) or (mode == "head" and n <= window):
+                continue
+            if mode == "head_tail" and n != window:
+                continue
+            full = caches.get((split, "head", longest)) if mode == "head_tail" and longest else None
+            res = check_tokens(base, other, window, mode, full, longest)
+            label = f"{n} tokens" if mode == "head" else f"{n} tokens, first + last half"
+            out[f"{split}: {label}"] = res
+            tails = f"{res['tails_checked']:,}" if mode == "head_tail" else "–"
+            rows.append([split, label, f"{res['comments']:,}", f"{res['mismatches']:,}", tails])
+    if not rows:
+        return "", {}
     md = "\n".join(
         [
-            "## Long comments",
+            "## Same tokens?",
             "",
-            f"{long.mean():.1%} of test comments are longer than the {cfg_len}-token input window ({unit}); the "
-            f"model never sees anything after the first {cfg_len} tokens. Share of each label's positives that are "
-            "long: " + ", ".join(pos_long) + ". ROC-AUC on short / long comments (seed-averaged predictions):",
+            f"The cached token ids of the longer-input runs against the {window}-token baseline's (`<data>/cache`). A "
+            f"comment that fits in {window} tokens must be tokenized identically; a longer window must start with the "
+            "baseline's tokens; head + tail must keep the baseline's first half and end with the comment's last tokens"
+            + (f" (checked against the {longest}-token cache for comments that fit in it)" if longest else "")
+            + ". The caches were written at "
+            "different times, possibly by different `transformers` releases, so no mismatches also means the tokenizer "
+            "did not change between the runs.",
             "",
-            table(["Head", *[f"`{k}`" for k in LABELS]], rows),
+            table(["Split", "Input", "Comments", "Mismatches", "Tails checked"], rows, align="llrrr"),
         ]
     )
     return md, out
@@ -824,8 +981,13 @@ def fig_agreement(agree: dict, fig_dir: Path) -> List[Path]:
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--results", default=str(ROOT / "results"))
-    parser.add_argument("--data", help="folder with train.csv / test.csv / test_labels.csv (enables sections 4-10)")
-    parser.add_argument("--bootstrap", type=int, default=200, help="bootstrap rounds for section 9 (0 = skip)")
+    parser.add_argument(
+        "--data",
+        help="folder with train.csv / test.csv / test_labels.csv and the token cache (enables the label-based sections)",
+    )
+    parser.add_argument(
+        "--bootstrap", type=int, default=200, help="bootstrap rounds for the sampling-noise section (0 = skip)"
+    )
     parser.add_argument("--show-examples", type=int, default=0, help="print N confidently-disagreeing comments")
     parser.add_argument("--out", help="output stem (default: <results>/diagnosis)")
     parser.add_argument("--figures", help="also draw the agreement figure into this folder (e.g. docs/figures)")
@@ -858,11 +1020,15 @@ def main(argv: Optional[List[str]] = None) -> int:
                     if not np.array_equal(r.preds()["test_ids"], ids):
                         raise SystemExit(f"{r.name}: test ids are in a different order from {any_run.name}")
             lab = load_labels(Path(args.data), ids)
+            base_encoder = (
+                next((r.metrics.get("encoder") for r in groups.get(BASELINE, [])), None) or "bert-base-uncased"
+            )
             sections += [
                 ("labels", lambda: label_structure(lab)),
                 ("ensembles", lambda: ensembles(groups, lab)),
                 ("subtypes", lambda: subtype_auc(groups, lab)),
                 ("length", lambda: length_effect(groups, lab)),
+                ("tokens", lambda: token_check(Path(args.data), base_encoder)),
                 ("routing_recall", lambda: routing_recall(groups, lab)),
                 ("bootstrap", lambda: bootstrap(groups, lab, args.bootstrap)),
                 ("disagreements", lambda: disagreements(groups, lab, args.show_examples)),
