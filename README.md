@@ -43,8 +43,8 @@ MoE's problem. Letting BERT read more of each comment does.**
   PR-AUC (better on every seed) for under 10% more training time, reaching 0.9868. Keeping the
   first 63 and last 63 tokens instead of the first 126 gives +0.0011 ± 0.0002 at no extra cost.
   No head or loss raised ROC-AUC by more than 0.0003, and averaging 3 seeds by 0.0004. One
-  caveat: these runs used a newer `transformers` release (5.18 vs 5.17), so a same-environment
-  re-run of the baseline is queued as a control.
+  caveat: these runs used a newer `transformers` release (5.18 vs 5.17). A same-environment
+  re-run of the baseline is set up as a control (`bert_bce_len128`) but has not been run yet.
 * **Where the rest of the headroom is.** Averaging 3 seeds adds +0.008 PR-AUC. The models also
   agree on many of their mistakes: averaged over 36 runs, 730 test comments labelled clean get
   p(`toxic`) ≥ 0.9, which looks like label noise. [`docs/diagnosis.md`](docs/diagnosis.md) has
@@ -268,9 +268,10 @@ the first 254 on ROC-AUC, so the end of a long comment says more than its middle
 [`docs/diagnosis.md`](docs/diagnosis.md#7-longer-inputs-the-first-change-that-helps) compares
 this with expectations written before the runs.
 
-**Next steps:** the same-environment control for the longer-input runs and their breakdown into
-short and long comments (both queued); an audit of the 730 test comments labelled clean that the
-models confidently score as toxic; ensembles of 512-token models; a stronger encoder
+**Next steps:** two checks on the longer-input result that are set up but not yet run (the
+same-environment baseline re-run in `configs/length.yaml` and the short- vs long-comment split in
+`scripts/diagnose.py`); an audit of the 730 test comments labelled clean that the models
+confidently score as toxic; ensembles of 512-token models; a stronger encoder
 ([`configs/encoders.yaml`](configs/encoders.yaml): DeBERTa-v3-base, set up but not yet run); and
 MoE layers inside the encoder, routed per token.
 

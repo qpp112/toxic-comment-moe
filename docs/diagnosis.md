@@ -246,12 +246,12 @@ up:**
 
 **A caveat: the software version.** The baseline was trained with `transformers` 5.17 and these
 runs with 5.18, on the same GPU type with the same PyTorch version and seeds. Two checks are
-queued to rule the update out as the cause. `configs/length.yaml` now also re-trains the
+set up to rule the update out as the cause, but have not been run yet. `configs/length.yaml` now also re-trains the
 128-token baseline in the new environment (`bert_bce_len128`), and `scripts/diagnose.py` compares
 the cached token ids of all runs, which shows whether tokenization changed. The split into short
 and long comments is a third check: on comments that fit in 128 tokens, every setting is given
 exactly the same input, so a gain that comes from reading more should come mostly from the long
-comments. Until these are in, read the gains as very likely but not final.
+comments. Until these have run, read the gains as very likely but not final.
 
 ## What I'd try next
 
