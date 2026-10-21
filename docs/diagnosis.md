@@ -4,7 +4,8 @@ The 24-run study ([README](../README.md#results)) found that a Mixture-of-Expert
 ties with a plain linear head. This page works out why from the saved runs. It then tests that
 explanation with 18 more runs: four new heads × 3 seeds, including two built specifically to get
 around the MoE's problem, plus six heads trained on a frozen encoder. Section 7 tests where the
-diagnosis did find headroom, the input length (9 more runs).
+diagnosis did find headroom, the input length (12 more runs, three of them a re-run of the
+baseline).
 
 Every number here comes from [`scripts/diagnose.py`](../scripts/diagnose.py) or
 [`scripts/make_report.py`](../scripts/make_report.py). Their full output is in
@@ -32,7 +33,8 @@ the linear-head baseline `bert_bce`: same loss, same seeds, same data.
 Averaging three seeds of the plain linear head gains more (+0.008 PR-AUC) than any head
 achieved. The remaining errors are concentrated in long comments and in what is probably label
 noise ([section 6](#6-where-the-remaining-errors-are)). Letting BERT read 512 tokens instead of
-128 is the first change that helps: +0.0014 ROC-AUC, more than any head, loss or seed ensemble
+128 is the first change that helps: +0.0014 ROC-AUC, more than any head, loss or seed ensemble,
+almost all of it on the 19% of comments that are long
 ([section 7](#7-longer-inputs-the-first-change-that-helps)).
 
 ## 1. What the router learned
@@ -90,7 +92,7 @@ That is where PR-AUC and F1 are decided. Compare two models trained with differe
 | `obscene` | 0.941 | 0.939 | 0.916 | 0.773 |
 | `threat` | 0.889 | 0.880 | 0.816 | 0.236 |
 | `insult` | 0.927 | 0.923 | 0.864 | 0.747 |
-| `identity_hate` | 0.901 | 0.897 | 0.848 | 0.476 |
+| `identity_hate` | 0.902 | 0.897 | 0.848 | 0.475 |
 
 At the top, the MoE head is about as interchangeable with the linear head as one linear seed is
 with another. My first look at whole-ranking correlations (about 0.5 between the two heads for
@@ -179,15 +181,15 @@ to come from the input, the encoder or the data. Section 7 tests the first of th
 
 ## 6. Where the remaining errors are
 
-* **Validation vs test.** All 36 fine-tuned runs score 0.0061 lower ROC-AUC on test than on
+* **Validation vs test.** All 48 fine-tuned runs score 0.0061 lower ROC-AUC on test than on
   validation (std 0.0003). The gap is in `toxic` (0.014), `obscene` (0.011) and `insult` (0.009),
   not in the rare labels.
 * **Long comments.** 19% of test comments are longer than the 128-token input window, so the
   model never sees their end. On them, ROC-AUC drops for the frequent labels: `toxic` 0.957 vs
   0.974 on short comments, `obscene` 0.966 vs 0.982, `insult` 0.968 vs 0.981. The rare labels
   are barely affected. Section 7 tests longer inputs.
-* **Probable label noise.** Averaged over all 36 fine-tuned runs, 730 test comments labelled
-  clean get p(`toxic`) ≥ 0.9, while only 34 of the 6,090 comments labelled toxic get ≤ 0.05.
+* **Probable label noise.** Averaged over all 48 fine-tuned runs, 944 test comments labelled
+  clean get p(`toxic`) ≥ 0.9, while only 27 of the 6,090 comments labelled toxic get ≤ 0.05.
 * **For scale:** this single BERT-base scores 0.9855 (0.9868 with 512-token inputs, section 7).
   [Detoxify](https://huggingface.co/unitary/toxic-bert)'s BERT-base model reports 0.98636, and the
   top Kaggle leaderboard score was 0.98856.
@@ -199,11 +201,13 @@ therefore keeps the linear head and BCE and changes only what BERT reads. With [
 128-token input holds the first 126 tokens of a comment. The alternatives are 256 tokens, 512
 tokens (BERT's maximum), and 128 tokens made of the first 63 and the last 63 tokens ("head +
 tail", [Sun et al., 2019](https://arxiv.org/abs/1905.05583)). Each has 3 seeds, paired with the
-baseline's:
+baseline's. A fourth setting re-runs the 128-token baseline itself, as a check (end of this
+section):
 
 | Input | Time / run (A100) | Test ROC-AUC | Δ ROC-AUC | Δ PR-AUC |
 |---|---:|---:|---:|---:|
 | 128 tokens: first 126 (baseline) | 7.5 min | 0.9855 | – | – |
+| 128 tokens: baseline re-run (check) | 7.4 min | 0.9855 | +0.0000 ± 0.0000 | +0.000 ± 0.000 |
 | 256 tokens: first 254 | 7.7 min | 0.9866 | +0.0011 ± 0.0002 | +0.005 ± 0.003 |
 | 512 tokens: first 510 | 8.2 min | 0.9868 | +0.0014 ± 0.0002 | +0.006 ± 0.002 |
 | 128 tokens: first 63 + last 63 | 7.5 min | 0.9866 | +0.0011 ± 0.0002 | +0.003 ± 0.001 |
@@ -230,6 +234,23 @@ baseline's:
   (+0.000 ± 0.001, vs +0.006 ± 0.004 with 512 tokens), and `identity_hate` ROC-AUC does not move.
   Rare-label PR-AUC is noisy, though; the per-label tables are in the
   [README](../README.md#results).
+* **The gain is where the extra tokens are.** Splitting the test set at 128 tokens, paired by
+  seed (Δ ROC-AUC, mean over labels):
+
+  | Input | All comments | Short comments (81%) | Long comments (19%) |
+  |---|---:|---:|---:|
+  | 128 tokens: baseline re-run | +0.0000 ± 0.0000 | +0.0000 ± 0.0001 | −0.0001 ± 0.0002 |
+  | 256 tokens | +0.0011 ± 0.0002 | +0.0001 ± 0.0001 | +0.0115 ± 0.0012 |
+  | 512 tokens | +0.0014 ± 0.0002 | +0.0002 ± 0.0001 | +0.0131 ± 0.0010 |
+  | 128 tokens: first 63 + last 63 | +0.0011 ± 0.0002 | +0.0002 ± 0.0000 | +0.0098 ± 0.0014 |
+
+  On long comments, 512 tokens adds +0.0209 ROC-AUC to `toxic`, +0.0215 to `obscene`, +0.0213
+  to `insult`, +0.0079 to `identity_hate`, +0.0055 ± 0.0046 to `severe_toxic` and +0.0014 to
+  `threat`. That more than closes the gap of section 6: with seed-averaged predictions, long
+  comments now score higher than short ones (`toxic` 0.978 vs 0.975, `obscene` 0.987 vs 0.982,
+  `insult` 0.989 vs 0.982). Head + tail matches 512 tokens on long `toxic` comments (+0.0213) but
+  gets nothing on `identity_hate` (−0.0027 ± 0.0024, against +0.0079): for that label the middle
+  of a long comment matters.
 * **For scale:** at 0.9868, one BERT-base reading 512 tokens is slightly above the 0.98636 that
   Detoxify reports for its BERT-base model, and 0.0018 below the top Kaggle score.
 
@@ -238,26 +259,32 @@ up:**
 
 | Expectation | Result |
 |---|---|
-| 512 tokens raises `toxic`, `obscene` and `insult` ROC-AUC on long comments, without closing the gap to short comments. | The three labels gain +0.0015, +0.0015 and +0.0021 overall. The split into short and long comments is still to come. |
+| 512 tokens raises `toxic`, `obscene` and `insult` ROC-AUC on long comments, without closing the gap to short comments. | Half right. On long comments the three labels gain about +0.021, and the gap does not just close but reverses: long comments now score higher than short ones (`toxic` 0.978 vs 0.975). |
 | That adds only a few ten-thousandths to the overall mean, because 81% of comments are unaffected. | Wrong: +0.0014, several times more. |
 | 256 tokens gets most of that gain. | Held: about 80%. |
 | Head + tail helps only if the end of a long comment matters more than its middle. | It gained as much ROC-AUC as 256 tokens, so the end does matter more. |
 | The rare labels do not change. | Wrong for `identity_hate` (+0.0012 ± 0.0002 at 512 tokens) and probably for `severe_toxic` (+0.0012 to +0.0016 in all three settings, each ± 0.0009–0.0012). Right for `threat` (+0.0002 to +0.0004). In hindsight, `severe_toxic` has the most long comments of any label: 23% of its positives, against 8% for `toxic`. |
 
-**A caveat: the software version.** The baseline was trained with `transformers` 5.17 and these
-runs with 5.18, on the same GPU type with the same PyTorch version and seeds. Two checks are
-set up to rule the update out as the cause, but have not been run yet. `configs/length.yaml` now also re-trains the
-128-token baseline in the new environment (`bert_bce_len128`), and `scripts/diagnose.py` compares
-the cached token ids of all runs, which shows whether tokenization changed. The split into short
-and long comments is a third check: on comments that fit in 128 tokens, every setting is given
-exactly the same input, so a gain that comes from reading more should come mostly from the long
-comments. Until these have run, read the gains as very likely but not final.
+**Three checks rule out other causes.**
+
+* **The software version.** The baseline was trained with `transformers` 5.17 and the
+  longer-input runs with 5.18. The re-run of the 128-token baseline (`bert_bce_len128`) ended up
+  on 5.20.1 because Colab had updated again. It scores within 0.0001 of the original on every seed
+  (paired ROC-AUC difference +0.0000 ± 0.0000, PR-AUC −0.0003 ± 0.0001), so the library version
+  does not move the scores.
+* **The tokens.** In all 159,571 training and 63,978 test comments, comments that fit in 128
+  tokens are tokenized identically in every run, and the 256- and 512-token inputs start with
+  exactly the baseline's tokens. Head + tail keeps the baseline's first half and ends with the
+  comment's last 63 tokens, checked on the long comments that fit in 512 tokens (27,252 training,
+  10,673 test).
+* **Where the gain is.** On short comments, where every setting reads exactly the baseline's
+  input, the gain is at most +0.0002 (table above).
+
+The gain comes from reading more of each comment.
 
 ## What I'd try next
 
-* **Finish the input-length checks** (section 7): the same-environment control and the split
-  into short and long comments.
-* **A look at the 730 confident disagreements** (`diagnose.py --show-examples`), to measure how
+* **A look at the 944 confident disagreements** (`diagnose.py --show-examples`), to measure how
   much of the remaining error is label noise.
 * **Ensembles of 512-token models.** At 128 tokens, averaging three seeds added +0.008 PR-AUC.
 * **MoE where it is usually used:** experts inside the encoder's feed-forward layers, routed per

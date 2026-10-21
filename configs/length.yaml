@@ -9,9 +9,10 @@
 #   bert_bce_headtail  still 128 tokens, but the first 63 + last 63 instead of the first 126:
 #                      same compute as the baseline; tests whether the end of a long comment
 #                      matters more than its middle (Sun et al., 2019)
-#   bert_bce_len128    control: the 128-token baseline itself, re-run in the same environment
-#                      as the runs above (the first length runs used transformers 5.18, the
-#                      main study 5.17). Its difference from bert_bce should be ~0.
+#   bert_bce_len128    check: the 128-token baseline itself, re-run in a newer environment (the
+#                      main study used transformers 5.17, the runs above 5.18, this one ran on
+#                      5.20.1). It matched bert_bce to +0.0000 +- 0.0000 ROC-AUC, so the library
+#                      version does not move the scores (docs/diagnosis.md, section 7).
 #
 # Same seeds and data split as the main study, so every run is paired by seed with bert_bce.
 # Batches are padded per batch, so only long comments cost more: on an A100 a run took 7.7 min

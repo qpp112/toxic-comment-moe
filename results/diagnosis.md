@@ -36,18 +36,18 @@ For each label, the *K* highest-scored test comments (K = 2 × the label's test 
 | `obscene` | 0.941 | 0.937 | 0.939 | 0.940 | 0.941 | 0.940 | 0.941 |
 | `threat` | 0.889 | 0.872 | 0.880 | 0.875 | 0.877 | 0.880 | 0.876 |
 | `insult` | 0.927 | 0.919 | 0.923 | 0.924 | 0.924 | 0.926 | 0.923 |
-| `identity_hate` | 0.901 | 0.890 | 0.897 | 0.894 | 0.892 | 0.895 | 0.895 |
+| `identity_hate` | 0.902 | 0.890 | 0.897 | 0.894 | 0.893 | 0.895 | 0.895 |
 
 The same pairs, Spearman correlation among the **bottom 90%** of both rankings (mostly clean comments, which hardly affect any metric):
 
 | Label | Linear vs Linear | MoE vs MoE | Linear vs MoE | Linear vs MLP | Linear vs MoE, no balancing | Linear vs Multi-gate MoE | Linear vs Label attention |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | `toxic` | 0.957 | 0.856 | 0.892 | 0.947 | 0.948 | 0.948 | 0.951 |
-| `severe_toxic` | 0.861 | 0.584 | 0.286 | 0.624 | 0.594 | 0.644 | 0.841 |
+| `severe_toxic` | 0.861 | 0.584 | 0.286 | 0.624 | 0.594 | 0.644 | 0.840 |
 | `obscene` | 0.916 | 0.776 | 0.773 | 0.904 | 0.896 | 0.904 | 0.907 |
 | `threat` | 0.816 | 0.667 | 0.236 | 0.567 | 0.597 | 0.539 | 0.790 |
 | `insult` | 0.864 | 0.766 | 0.747 | 0.838 | 0.861 | 0.847 | 0.850 |
-| `identity_hate` | 0.848 | 0.651 | 0.476 | 0.642 | 0.661 | 0.623 | 0.837 |
+| `identity_hate` | 0.848 | 0.651 | 0.475 | 0.642 | 0.661 | 0.623 | 0.837 |
 
 ### Where the MoE's different ranking of clean comments comes from
 
@@ -61,12 +61,16 @@ Test comments the MoE scores below 0.01 for `toxic`, grouped by their top-1 expe
 
 ## 3. How much of the F1 differences is threshold noise?
 
-F1 thresholds are tuned on the validation split and applied to test. *Oracle* thresholds are tuned on test itself, from the saved precision-recall curves: not a fair score, but it removes the noise of transferring thresholds. F1 lost by the transfer, mean over all runs: `toxic` 0.037, `severe_toxic` 0.032, `obscene` 0.014, `threat` 0.021, `insult` 0.005, `identity_hate` 0.011.
+F1 thresholds are tuned on the validation split and applied to test. *Oracle* thresholds are tuned on test itself, from the saved precision-recall curves: not a fair score, but it removes the noise of transferring thresholds. F1 lost by the transfer, mean over all runs: `toxic` 0.038, `severe_toxic` 0.032, `obscene` 0.016, `threat` 0.021, `insult` 0.006, `identity_hate` 0.012.
 
 Paired difference from the baseline (mean ± std over seeds). If the std shrinks a lot with oracle thresholds, most of the seed-to-seed spread in F1 comes from the thresholds, not the models.
 
 | Setting | Seeds | Δ macro-F1, val thr. | Δ rare-F1, val thr. | Δ macro-F1, oracle thr. | Δ rare-F1, oracle thr. |
 |---|---:|---:|---:|---:|---:|
+| `bert_bce_headtail` | 3 | +0.0001 ± 0.0148 | +0.0011 ± 0.0183 | +0.0027 ± 0.0031 | +0.0015 ± 0.0065 |
+| `bert_bce_len128` | 3 | -0.0009 ± 0.0059 | -0.0036 ± 0.0115 | +0.0015 ± 0.0017 | +0.0019 ± 0.0035 |
+| `bert_bce_len256` | 3 | +0.0043 ± 0.0073 | +0.0122 ± 0.0099 | +0.0035 ± 0.0041 | +0.0039 ± 0.0070 |
+| `bert_bce_len512` | 3 | +0.0065 ± 0.0094 | +0.0105 ± 0.0159 | +0.0051 ± 0.0021 | +0.0059 ± 0.0039 |
 | `bert_cbfocal` | 3 | -0.0014 ± 0.0177 | +0.0013 ± 0.0263 | -0.0007 ± 0.0044 | +0.0009 ± 0.0079 |
 | `bert_focal` | 3 | -0.0031 ± 0.0159 | -0.0030 ± 0.0234 | -0.0022 ± 0.0021 | -0.0042 ± 0.0054 |
 | `bert_wbce` | 3 | +0.0053 ± 0.0116 | +0.0131 ± 0.0224 | +0.0011 ± 0.0019 | +0.0069 ± 0.0048 |
@@ -81,7 +85,7 @@ Paired difference from the baseline (mean ± std over seeds). If the std shrinks
 
 ## 4. Validation vs test
 
-Over all 36 fine-tuned BERT-base runs, mean ROC-AUC is 0.0061 lower on the test set than on the validation split (std over runs 0.0003). Per label: `toxic` +0.0137, `severe_toxic` +0.0025, `obscene` +0.0112, `threat` +0.0000, `insult` +0.0091, `identity_hate` -0.0000. A gap that is the same for every head and loss is not something a different head can close.
+Over all 48 fine-tuned BERT-base runs, mean ROC-AUC is 0.0061 lower on the test set than on the validation split (std over runs 0.0003). Per label: `toxic` +0.0138, `severe_toxic` +0.0023, `obscene` +0.0114, `threat` -0.0001, `insult` +0.0090, `identity_hate` +0.0000. A gap that is the same for every head and loss is not something a different head can close.
 
 ## 5. Labels
 
@@ -102,6 +106,10 @@ Averaging the probabilities of a setting's seeds (test ROC-AUC / PR-AUC, mean ov
 | Setting | Seeds | Single ROC | Ensemble ROC | Gain | Single PR | Ensemble PR | Gain |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | `bert_bce` | 3 | 0.9855 | 0.9859 | +0.0004 | 0.687 | 0.696 | +0.008 |
+| `bert_bce_headtail` | 3 | 0.9866 | 0.9869 | +0.0003 | 0.690 | 0.699 | +0.009 |
+| `bert_bce_len128` | 3 | 0.9855 | 0.9859 | +0.0004 | 0.687 | 0.696 | +0.009 |
+| `bert_bce_len256` | 3 | 0.9866 | 0.9870 | +0.0004 | 0.693 | 0.702 | +0.009 |
+| `bert_bce_len512` | 3 | 0.9869 | 0.9872 | +0.0004 | 0.693 | 0.702 | +0.008 |
 | `bert_cbfocal` | 3 | 0.9856 | 0.9861 | +0.0005 | 0.675 | 0.688 | +0.012 |
 | `bert_focal` | 3 | 0.9858 | 0.9862 | +0.0004 | 0.683 | 0.692 | +0.009 |
 | `bert_wbce` | 3 | 0.9850 | 0.9859 | +0.0008 | 0.655 | 0.679 | +0.024 |
@@ -141,7 +149,7 @@ ROC-AUC for each sub-label, computed only over the 6,090 test comments labelled 
 
 ## 8. Long comments
 
-19.1% of test comments are longer than the 128-token input window (bert-base-uncased tokens); the model never sees anything after the first 128 tokens. Share of each label's positives that are long: `toxic` 7.8%, `severe_toxic` 23.2%, `obscene` 8.4%, `threat` 12.3%, `insult` 8.2%, `identity_hate` 10.5%. ROC-AUC on short / long comments (seed-averaged predictions):
+19.1% of test comments are longer than the 128-token input window (bert-base-uncased tokens); the model never sees anything after the first 128 tokens. Longer than 256 tokens: 6.9%; longer than 512: 2.4%. Share of each label's positives that are long: `toxic` 7.8%, `severe_toxic` 23.2%, `obscene` 8.4%, `threat` 12.3%, `insult` 8.2%, `identity_hate` 10.5%. ROC-AUC on short / long comments (seed-averaged predictions):
 
 | Head | `toxic` | `severe_toxic` | `obscene` | `threat` | `insult` | `identity_hate` |
 |---|---:|---:|---:|---:|---:|---:|
@@ -151,8 +159,43 @@ ROC-AUC for each sub-label, computed only over the 6,090 test comments labelled 
 | MoE, no balancing | 0.9740 / 0.9565 | 0.9902 / 0.9929 | 0.9820 / 0.9632 | 0.9961 / 0.9979 | 0.9813 / 0.9686 | 0.9921 / 0.9896 |
 | Multi-gate MoE | 0.9740 / 0.9571 | 0.9902 / 0.9922 | 0.9818 / 0.9640 | 0.9965 / 0.9979 | 0.9815 / 0.9687 | 0.9926 / 0.9894 |
 | Label attention | 0.9741 / 0.9567 | 0.9902 / 0.9898 | 0.9819 / 0.9642 | 0.9967 / 0.9978 | 0.9813 / 0.9668 | 0.9923 / 0.9896 |
+| Linear, 128 tokens (re-run) | 0.9743 / 0.9570 | 0.9904 / 0.9921 | 0.9819 / 0.9653 | 0.9958 / 0.9971 | 0.9813 / 0.9683 | 0.9921 / 0.9883 |
+| Linear, 256 tokens | 0.9744 / 0.9745 | 0.9904 / 0.9949 | 0.9819 / 0.9843 | 0.9961 / 0.9982 | 0.9815 / 0.9865 | 0.9923 / 0.9959 |
+| Linear, 512 tokens | 0.9745 / 0.9776 | 0.9903 / 0.9956 | 0.9821 / 0.9867 | 0.9961 / 0.9988 | 0.9816 / 0.9892 | 0.9924 / 0.9958 |
+| Linear, first + last 63 tokens | 0.9747 / 0.9779 | 0.9905 / 0.9957 | 0.9820 / 0.9850 | 0.9962 / 0.9974 | 0.9814 / 0.9827 | 0.9922 / 0.9847 |
 
-## 9. Routing mistakes
+Longer inputs minus the 128-token baseline, paired by seed (Δ ROC-AUC, mean over labels). On short comments every setting is given exactly the baseline's input, so a difference there comes from training (longer training inputs, run-to-run noise, software version), not from reading more of the comment:
+
+| Input | Seeds | All comments | Short comments | Long comments |
+|---|---:|---:|---:|---:|
+| Linear, 128 tokens (re-run) | 3 | -0.0000 ± 0.0000 | -0.0000 ± 0.0001 | -0.0001 ± 0.0002 |
+| Linear, 256 tokens | 3 | +0.0011 ± 0.0002 | +0.0001 ± 0.0001 | +0.0115 ± 0.0012 |
+| Linear, 512 tokens | 3 | +0.0014 ± 0.0002 | +0.0002 ± 0.0001 | +0.0131 ± 0.0010 |
+| Linear, first + last 63 tokens | 3 | +0.0011 ± 0.0002 | +0.0002 ± 0.0000 | +0.0098 ± 0.0014 |
+
+Δ ROC-AUC on long comments, per label:
+
+| Input | `toxic` | `severe_toxic` | `obscene` | `threat` | `insult` | `identity_hate` |
+|---|---:|---:|---:|---:|---:|---:|
+| Linear, 128 tokens (re-run) | -0.0002 ± 0.0002 | -0.0002 ± 0.0001 | -0.0002 ± 0.0006 | -0.0002 ± 0.0003 | -0.0002 ± 0.0001 | +0.0002 ± 0.0003 |
+| Linear, 256 tokens | +0.0178 ± 0.0006 | +0.0048 ± 0.0047 | +0.0190 ± 0.0015 | +0.0008 ± 0.0002 | +0.0186 ± 0.0013 | +0.0080 ± 0.0005 |
+| Linear, 512 tokens | +0.0209 ± 0.0006 | +0.0055 ± 0.0046 | +0.0215 ± 0.0012 | +0.0014 ± 0.0004 | +0.0213 ± 0.0009 | +0.0079 ± 0.0006 |
+| Linear, first + last 63 tokens | +0.0213 ± 0.0006 | +0.0056 ± 0.0044 | +0.0197 ± 0.0013 | +0.0001 ± 0.0003 | +0.0148 ± 0.0014 | -0.0027 ± 0.0024 |
+
+## 9. Same tokens?
+
+The cached token ids of the longer-input runs against the 128-token baseline's (`<data>/cache`). A comment that fits in 128 tokens must be tokenized identically; a longer window must start with the baseline's tokens; head + tail must keep the baseline's first half and end with the comment's last tokens (checked against the 512-token cache for comments that fit in it). The caches were written at different times, possibly by different `transformers` releases, so no mismatches also means the tokenizer did not change between the runs.
+
+| Split | Input | Comments | Mismatches | Tails checked |
+|---|---|---:|---:|---:|
+| train | 256 tokens | 159,571 | 0 | – |
+| train | 512 tokens | 159,571 | 0 | – |
+| train | 128 tokens, first + last half | 159,571 | 0 | 27,252 |
+| test | 256 tokens | 63,978 | 0 | – |
+| test | 512 tokens | 63,978 | 0 | – |
+| test | 128 tokens, first + last half | 63,978 | 0 | 10,673 |
+
+## 10. Routing mistakes
 
 Share of each label's positives that the router sends mostly (> 50% of the weight) away from the two experts toxic comments use most, and the recall at the tuned threshold for those positives vs the rest.
 
@@ -165,7 +208,7 @@ Share of each label's positives that the router sends mostly (> 50% of the weigh
 | `moe_cbfocal_s43` | 2.7% (0.24 vs 0.95) | 0.0% (– vs 0.79) | 1.6% (0.03 vs 0.84) | 0.0% (– vs 0.68) | 1.3% (0.04 vs 0.78) | 0.4% (0.00 vs 0.80) |
 | `moe_cbfocal_s44` | 3.2% (0.20 vs 0.90) | 0.0% (– vs 0.70) | 1.5% (0.00 vs 0.78) | 0.9% (0.00 vs 0.69) | 1.8% (0.00 vs 0.77) | 0.3% (0.00 vs 0.70) |
 
-## 10. Test-set sampling noise
+## 11. Test-set sampling noise
 
 MoE minus linear head, both averaged over their seeds, with 95% intervals from 200 paired bootstrap resamples of the test comments. An interval that contains 0 means the 64k test comments cannot tell the two heads apart.
 
@@ -178,6 +221,6 @@ MoE minus linear head, both averaged over their seeds, with 95% intervals from 2
 | `insult` | +0.0003 | [-0.0000, +0.0006] | +0.000 | [-0.002, +0.002] |
 | `identity_hate` | +0.0004 | [-0.0000, +0.0007] | +0.005 | [-0.002, +0.012] |
 
-## 11. Shared errors
+## 12. Shared errors
 
-Averaging all 36 fine-tuned BERT-base runs: 730 test comments labelled clean get p(`toxic`) ≥ 0.9, and 34 of the 6,090 comments labelled toxic get p(`toxic`) ≤ 0.05. Errors every model makes with confidence cannot be fixed by changing the head; some of them are label noise (`--show-examples 10` prints a few).
+Averaging all 48 fine-tuned BERT-base runs: 944 test comments labelled clean get p(`toxic`) ≥ 0.9, and 27 of the 6,090 comments labelled toxic get p(`toxic`) ≤ 0.05. Errors every model makes with confidence cannot be fixed by changing the head; some of them are label noise (`--show-examples 10` prints a few).

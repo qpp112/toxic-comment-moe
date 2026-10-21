@@ -12,7 +12,7 @@ and a Mixture-of-Experts (MoE) head looked promising. This repository rebuilds t
 properly and tests both ideas in a controlled study: **2 classification heads × 4 losses × 3 seeds
 = 24 BERT-base runs** on the full training set (160k comments), scored on Kaggle's official
 labelled test set (64k comments), with decision thresholds tuned on a validation split only.
-A follow-up of **27 more runs** works out why the MoE head failed, tests two heads built to get
+A follow-up of **30 more runs** works out why the MoE head failed, tests two heads built to get
 around it, and tests longer inputs.
 
 **Result: no head and no loss beats plain BERT + BCE, including the two heads built to fix the
@@ -42,12 +42,13 @@ MoE's problem. Letting BERT read more of each comment does.**
   128-token input. Raising it to 512 tokens adds +0.0014 ± 0.0002 ROC-AUC and +0.006 ± 0.002
   PR-AUC (better on every seed) for under 10% more training time, reaching 0.9868. Keeping the
   first 63 and last 63 tokens instead of the first 126 gives +0.0011 ± 0.0002 at no extra cost.
-  No head or loss raised ROC-AUC by more than 0.0003, and averaging 3 seeds by 0.0004. One
-  caveat: these runs used a newer `transformers` release (5.18 vs 5.17). A same-environment
-  re-run of the baseline is set up as a control (`bert_bce_len128`) but has not been run yet.
+  No head or loss raised ROC-AUC by more than 0.0003, and averaging 3 seeds by 0.0004. The gain
+  sits where the extra tokens are: +0.013 on long comments, +0.0002 on short ones. A re-run of
+  the baseline on a newer `transformers` release matches the original to within 0.0001, so the
+  software update is not the cause.
 * **Where the rest of the headroom is.** Averaging 3 seeds adds +0.008 PR-AUC. The models also
-  agree on many of their mistakes: averaged over 36 runs, 730 test comments labelled clean get
-  p(`toxic`) ≥ 0.9, which looks like label noise. [`docs/diagnosis.md`](docs/diagnosis.md) has
+  agree on many of their mistakes: averaged over 48 fine-tuned runs, 944 test comments labelled
+  clean get p(`toxic`) ≥ 0.9, which looks like label noise. [`docs/diagnosis.md`](docs/diagnosis.md) has
   the full analysis.
 
 [`docs/course_project.md`](docs/course_project.md) describes the original project and the bugs
@@ -114,16 +115,18 @@ Trained on 143,613 comments (100% of `train.csv` minus a 15,958-comment validati
 
 | Input | Time / run | Test ROC-AUC | Δ ROC-AUC | Δ PR-AUC | Δ Rare-label PR-AUC | Δ Macro-F1 (val-tuned thr.) | Δ Rare-label F1 |
 |---|---|---|---:|---:|---:|---:|---:|
+| 128 tokens (baseline re-run, control) | 7.4 min | 0.9855 ± 0.0002 | +0.0000 ± 0.0000 | +0.000 ± 0.000 | -0.001 ± 0.000 | -0.001 ± 0.006 | -0.004 ± 0.012 |
 | 256 tokens | 7.7 min | 0.9866 ± 0.0001 | +0.0011 ± 0.0002 | +0.005 ± 0.003 | +0.006 ± 0.005 | +0.004 ± 0.007 | +0.012 ± 0.010 |
 | 512 tokens | 8.2 min | 0.9868 ± 0.0000 | +0.0014 ± 0.0002 | +0.006 ± 0.002 | +0.006 ± 0.004 | +0.007 ± 0.009 | +0.010 ± 0.016 |
 | 128 tokens: first 63 + last 63 | 7.5 min | 0.9866 ± 0.0001 | +0.0011 ± 0.0002 | +0.003 ± 0.001 | +0.000 ± 0.001 | +0.000 ± 0.015 | +0.001 ± 0.018 |
 
-Δ test ROC-AUC per seed (42, 43, 44): 256 tokens +0.0011, +0.0013, +0.0009; 512 tokens +0.0012, +0.0016, +0.0013; 128 tokens: first 63 + last 63 +0.0010, +0.0013, +0.0010. Δ validation ROC-AUC (mean over labels): 256 tokens +0.0009 ± 0.0001; 512 tokens +0.0015 ± 0.0001; 128 tokens: first 63 + last 63 +0.0013 ± 0.0001.
+Δ test ROC-AUC per seed (42, 43, 44): 128 tokens (baseline re-run, control) +0.0000, -0.0001, +0.0000; 256 tokens +0.0011, +0.0013, +0.0009; 512 tokens +0.0012, +0.0016, +0.0013; 128 tokens: first 63 + last 63 +0.0010, +0.0013, +0.0010. Δ validation ROC-AUC (mean over labels): 128 tokens (baseline re-run, control) +0.0000 ± 0.0001; 256 tokens +0.0009 ± 0.0001; 512 tokens +0.0015 ± 0.0001; 128 tokens: first 63 + last 63 +0.0013 ± 0.0001.
 
 Δ test ROC-AUC per label:
 
 | Input | `toxic` | `severe_toxic` | `obscene` | `threat` | `insult` | `identity_hate` |
 |---|---:|---:|---:|---:|---:|---:|
+| 128 tokens (baseline re-run, control) | +0.0001 ± 0.0001 | -0.0001 ± 0.0001 | -0.0001 ± 0.0001 | -0.0002 ± 0.0001 | +0.0000 ± 0.0000 | +0.0001 ± 0.0001 |
 | 256 tokens | +0.0012 ± 0.0003 | +0.0012 ± 0.0012 | +0.0011 ± 0.0002 | +0.0002 ± 0.0002 | +0.0018 ± 0.0001 | +0.0011 ± 0.0006 |
 | 512 tokens | +0.0015 ± 0.0002 | +0.0015 ± 0.0009 | +0.0015 ± 0.0002 | +0.0004 ± 0.0001 | +0.0021 ± 0.0002 | +0.0012 ± 0.0002 |
 | 128 tokens: first 63 + last 63 | +0.0018 ± 0.0001 | +0.0016 ± 0.0010 | +0.0015 ± 0.0001 | +0.0003 ± 0.0001 | +0.0014 ± 0.0002 | +0.0000 ± 0.0001 |
@@ -132,6 +135,7 @@ Trained on 143,613 comments (100% of `train.csv` minus a 15,958-comment validati
 
 | Input | `toxic` | `severe_toxic` | `obscene` | `threat` | `insult` | `identity_hate` |
 |---|---:|---:|---:|---:|---:|---:|
+| 128 tokens (baseline re-run, control) | +0.0005 ± 0.0007 | -0.0040 ± 0.0035 | -0.0002 ± 0.0006 | +0.0001 ± 0.0020 | +0.0003 ± 0.0003 | +0.0015 ± 0.0013 |
 | 256 tokens | +0.0039 ± 0.0021 | +0.0039 ± 0.0074 | +0.0035 ± 0.0024 | +0.0073 ± 0.0113 | +0.0070 ± 0.0016 | +0.0073 ± 0.0018 |
 | 512 tokens | +0.0049 ± 0.0005 | -0.0006 ± 0.0082 | +0.0050 ± 0.0022 | +0.0031 ± 0.0046 | +0.0085 ± 0.0030 | +0.0141 ± 0.0078 |
 | 128 tokens: first 63 + last 63 | +0.0070 ± 0.0004 | -0.0044 ± 0.0045 | +0.0056 ± 0.0011 | -0.0050 ± 0.0109 | +0.0068 ± 0.0010 | +0.0083 ± 0.0037 |
@@ -209,6 +213,7 @@ Trained on 143,613 comments (100% of `train.csv` minus a 15,958-comment validati
 | `probe_moe` | 42 | 3 | 5.3 | bf16 | NVIDIA A100-SXM4-80GB | 5.17.0 |
 | `probe_mmoe` | 42 | 3 | 4.8 | bf16 | NVIDIA A100-SXM4-80GB | 5.17.0 |
 | `probe_labelattn` | 42 | 3 | 4.2 | bf16 | NVIDIA A100-SXM4-80GB | 5.17.0 |
+| `bert_bce_len128` | 42, 43, 44 | 2, 2, 2 | 7.4 | bf16 | NVIDIA A100-SXM4-80GB | 5.20.1 |
 | `bert_bce_len256` | 42, 43, 44 | 2, 2, 2 | 7.7 | bf16 | NVIDIA A100-SXM4-80GB | 5.18.0 |
 | `bert_bce_len512` | 42, 43, 44 | 2, 2, 2 | 8.2 | bf16 | NVIDIA A100-SXM4-80GB | 5.18.0 |
 | `bert_bce_headtail` | 42, 43, 44 | 2, 2, 2 | 7.5 | bf16 | NVIDIA A100-SXM4-80GB | 5.18.0 |
@@ -264,14 +269,19 @@ on the 19% of test comments cut at 128 tokens, vs 0.974 on the rest.
 [`configs/length.yaml`](configs/length.yaml) keeps the linear head and BCE and changes only what
 BERT reads (results in the tables above). 512 tokens helps every label, most of all `insult`
 (+0.0021 ROC-AUC). 256 tokens gets about 80% of that gain. The first 63 + last 63 tokens match
-the first 254 on ROC-AUC, so the end of a long comment says more than its middle. Section 7 of
-[`docs/diagnosis.md`](docs/diagnosis.md#7-longer-inputs-the-first-change-that-helps) compares
-this with expectations written before the runs.
+the first 254 on ROC-AUC, so the end of a long comment says more than its middle. On long
+comments alone, 512 tokens lifts `toxic` ROC-AUC from 0.957 to 0.978 (seed-averaged), above the
+0.975 it now gets on short comments.
 
-**Next steps:** two checks on the longer-input result that are set up but not yet run (the
-same-environment baseline re-run in `configs/length.yaml` and the short- vs long-comment split in
-`scripts/diagnose.py`); an audit of the 730 test comments labelled clean that the models
-confidently score as toxic; ensembles of 512-token models; a stronger encoder
+Three checks rule out other causes. On short comments, where every run reads the same input, the
+gain is only +0.0002. A re-run of the 128-token baseline on a newer `transformers` release (5.20
+vs 5.17) scores within 0.0001 of the original on every seed. And every run saw exactly the same
+tokens wherever their inputs overlap. Section 7 of
+[`docs/diagnosis.md`](docs/diagnosis.md#7-longer-inputs-the-first-change-that-helps) has the
+details and compares them with expectations written before the runs.
+
+**Next steps:** an audit of the 944 test comments labelled clean that the models confidently score
+as toxic; ensembles of 512-token models; a stronger encoder
 ([`configs/encoders.yaml`](configs/encoders.yaml): DeBERTa-v3-base, set up but not yet run); and
 MoE layers inside the encoder, routed per token.
 
@@ -378,7 +388,7 @@ python scripts/run_ablation.py                                   # main study ->
 python scripts/run_ablation.py --config configs/encoders.yaml    # optional DeBERTa-v3 study
 python scripts/run_ablation.py --config configs/heads.yaml       # follow-up heads (docs/diagnosis.md)
 python scripts/run_ablation.py --config configs/probes.yaml      # the same heads on a frozen encoder
-python scripts/run_ablation.py --config configs/length.yaml      # longer inputs: 256 / 512 tokens, head + tail, control
+python scripts/run_ablation.py --config configs/length.yaml      # longer inputs: 256 / 512 tokens, head + tail, baseline re-run
 python scripts/make_report.py --update-readme
 python scripts/diagnose.py --data data                           # diagnostics (CPU) -> results/diagnosis.md
 ```

@@ -58,16 +58,18 @@ Trained on 143,613 comments (100% of `train.csv` minus a 15,958-comment validati
 
 | Input | Time / run | Test ROC-AUC | Δ ROC-AUC | Δ PR-AUC | Δ Rare-label PR-AUC | Δ Macro-F1 (val-tuned thr.) | Δ Rare-label F1 |
 |---|---|---|---:|---:|---:|---:|---:|
+| 128 tokens (baseline re-run, control) | 7.4 min | 0.9855 ± 0.0002 | +0.0000 ± 0.0000 | +0.000 ± 0.000 | -0.001 ± 0.000 | -0.001 ± 0.006 | -0.004 ± 0.012 |
 | 256 tokens | 7.7 min | 0.9866 ± 0.0001 | +0.0011 ± 0.0002 | +0.005 ± 0.003 | +0.006 ± 0.005 | +0.004 ± 0.007 | +0.012 ± 0.010 |
 | 512 tokens | 8.2 min | 0.9868 ± 0.0000 | +0.0014 ± 0.0002 | +0.006 ± 0.002 | +0.006 ± 0.004 | +0.007 ± 0.009 | +0.010 ± 0.016 |
 | 128 tokens: first 63 + last 63 | 7.5 min | 0.9866 ± 0.0001 | +0.0011 ± 0.0002 | +0.003 ± 0.001 | +0.000 ± 0.001 | +0.000 ± 0.015 | +0.001 ± 0.018 |
 
-Δ test ROC-AUC per seed (42, 43, 44): 256 tokens +0.0011, +0.0013, +0.0009; 512 tokens +0.0012, +0.0016, +0.0013; 128 tokens: first 63 + last 63 +0.0010, +0.0013, +0.0010. Δ validation ROC-AUC (mean over labels): 256 tokens +0.0009 ± 0.0001; 512 tokens +0.0015 ± 0.0001; 128 tokens: first 63 + last 63 +0.0013 ± 0.0001.
+Δ test ROC-AUC per seed (42, 43, 44): 128 tokens (baseline re-run, control) +0.0000, -0.0001, +0.0000; 256 tokens +0.0011, +0.0013, +0.0009; 512 tokens +0.0012, +0.0016, +0.0013; 128 tokens: first 63 + last 63 +0.0010, +0.0013, +0.0010. Δ validation ROC-AUC (mean over labels): 128 tokens (baseline re-run, control) +0.0000 ± 0.0001; 256 tokens +0.0009 ± 0.0001; 512 tokens +0.0015 ± 0.0001; 128 tokens: first 63 + last 63 +0.0013 ± 0.0001.
 
 Δ test ROC-AUC per label:
 
 | Input | `toxic` | `severe_toxic` | `obscene` | `threat` | `insult` | `identity_hate` |
 |---|---:|---:|---:|---:|---:|---:|
+| 128 tokens (baseline re-run, control) | +0.0001 ± 0.0001 | -0.0001 ± 0.0001 | -0.0001 ± 0.0001 | -0.0002 ± 0.0001 | +0.0000 ± 0.0000 | +0.0001 ± 0.0001 |
 | 256 tokens | +0.0012 ± 0.0003 | +0.0012 ± 0.0012 | +0.0011 ± 0.0002 | +0.0002 ± 0.0002 | +0.0018 ± 0.0001 | +0.0011 ± 0.0006 |
 | 512 tokens | +0.0015 ± 0.0002 | +0.0015 ± 0.0009 | +0.0015 ± 0.0002 | +0.0004 ± 0.0001 | +0.0021 ± 0.0002 | +0.0012 ± 0.0002 |
 | 128 tokens: first 63 + last 63 | +0.0018 ± 0.0001 | +0.0016 ± 0.0010 | +0.0015 ± 0.0001 | +0.0003 ± 0.0001 | +0.0014 ± 0.0002 | +0.0000 ± 0.0001 |
@@ -76,6 +78,7 @@ Trained on 143,613 comments (100% of `train.csv` minus a 15,958-comment validati
 
 | Input | `toxic` | `severe_toxic` | `obscene` | `threat` | `insult` | `identity_hate` |
 |---|---:|---:|---:|---:|---:|---:|
+| 128 tokens (baseline re-run, control) | +0.0005 ± 0.0007 | -0.0040 ± 0.0035 | -0.0002 ± 0.0006 | +0.0001 ± 0.0020 | +0.0003 ± 0.0003 | +0.0015 ± 0.0013 |
 | 256 tokens | +0.0039 ± 0.0021 | +0.0039 ± 0.0074 | +0.0035 ± 0.0024 | +0.0073 ± 0.0113 | +0.0070 ± 0.0016 | +0.0073 ± 0.0018 |
 | 512 tokens | +0.0049 ± 0.0005 | -0.0006 ± 0.0082 | +0.0050 ± 0.0022 | +0.0031 ± 0.0046 | +0.0085 ± 0.0030 | +0.0141 ± 0.0078 |
 | 128 tokens: first 63 + last 63 | +0.0070 ± 0.0004 | -0.0044 ± 0.0045 | +0.0056 ± 0.0011 | -0.0050 ± 0.0109 | +0.0068 ± 0.0010 | +0.0083 ± 0.0037 |
@@ -153,6 +156,7 @@ Trained on 143,613 comments (100% of `train.csv` minus a 15,958-comment validati
 | `probe_moe` | 42 | 3 | 5.3 | bf16 | NVIDIA A100-SXM4-80GB | 5.17.0 |
 | `probe_mmoe` | 42 | 3 | 4.8 | bf16 | NVIDIA A100-SXM4-80GB | 5.17.0 |
 | `probe_labelattn` | 42 | 3 | 4.2 | bf16 | NVIDIA A100-SXM4-80GB | 5.17.0 |
+| `bert_bce_len128` | 42, 43, 44 | 2, 2, 2 | 7.4 | bf16 | NVIDIA A100-SXM4-80GB | 5.20.1 |
 | `bert_bce_len256` | 42, 43, 44 | 2, 2, 2 | 7.7 | bf16 | NVIDIA A100-SXM4-80GB | 5.18.0 |
 | `bert_bce_len512` | 42, 43, 44 | 2, 2, 2 | 8.2 | bf16 | NVIDIA A100-SXM4-80GB | 5.18.0 |
 | `bert_bce_headtail` | 42, 43, 44 | 2, 2, 2 | 7.5 | bf16 | NVIDIA A100-SXM4-80GB | 5.18.0 |

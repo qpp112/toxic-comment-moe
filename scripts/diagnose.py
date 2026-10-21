@@ -129,9 +129,12 @@ def pm(values: Sequence[float], digits: int = 3, signed: bool = False) -> str:
     fmt = f"{{:{'+' if signed else ''}.{digits}f}}"
     if len(v) == 0 or np.all(np.isnan(v)):
         return "–"
+    mean = float(np.nanmean(v))
+    if signed and round(mean, digits) == 0:
+        mean = 0.0  # a mean that rounds to zero is +0.000, never -0.000 (as in make_report)
     if len(v) == 1:
-        return fmt.format(v[0])
-    return f"{fmt.format(np.nanmean(v))} ± {np.nanstd(v, ddof=1):.{digits}f}"
+        return fmt.format(mean)
+    return f"{fmt.format(mean)} ± {np.nanstd(v, ddof=1):.{digits}f}"
 
 
 def name(group: str) -> str:
@@ -958,7 +961,8 @@ def fig_agreement(agree: dict, fig_dir: Path) -> List[Path]:
                     ax.plot(v, yi + dy, "o", color=colors[k], markersize=8, markeredgecolor=th["surface"],
                             markeredgewidth=1.5, zorder=3)  # fmt: skip
             ax.set_xlim(0, 1.0)
-            ax.set_title(f"{title}\n", loc="left", fontsize=10, color=th["ink"], pad=2)
+            # explicit pad instead of a trailing "\n": newer matplotlib versions drop the blank line
+            ax.set_title(title, loc="left", fontsize=10, color=th["ink"], pad=15)
             ax.text(0, 1.02, sub, transform=ax.transAxes, fontsize=8.5, color=th["ink2"], va="bottom")
             ax.tick_params(axis="x", labelsize=8)
         axes[0].set_yticks(y, LABELS, fontsize=9)

@@ -469,7 +469,7 @@ def length_section(settings: Dict[str, Setting]) -> List[str]:
     base_roc = {r.get("seed"): roc(r) for r in base.runs}
     per_seed = "; ".join(
         f"{s.title} "
-        + ", ".join(f"{roc(r) - base_roc[r.get('seed')]:+.4f}" for r in s.runs if r.get("seed") in base_roc)
+        + ", ".join(_signed(roc(r) - base_roc[r.get("seed")], 0.0, 1, 4) for r in s.runs if r.get("seed") in base_roc)
         for s in runs
     )
     return [
